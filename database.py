@@ -368,12 +368,20 @@ def get_race_dashboard(meet_id, session=None):
             row["pool"] = 2
 
     # Current heat per pool (row with highest CTS race number in each pool)
+    # Used by status pills and Companion endpoints.
     p1_max = max((r["cts_race_num"] for r in rows if r["pool"] == 1), default=None)
     p2_max = max((r["cts_race_num"] for r in rows if r["pool"] == 2), default=None)
     for row in rows:
         n = row.get("cts_race_num")
         row["is_current_p1"] = (n is not None and row["pool"] == 1 and n == p1_max)
         row["is_current_p2"] = (n is not None and row["pool"] == 2 and n == p2_max)
+
+    # Next heat = first unrun heat in schedule order (no CTS data yet).
+    # Used for the green table row highlight.
+    unrun = [r for r in rows if r.get("cts_race_num") is None]
+    next_id = min(unrun, key=lambda r: r["heat_order"])["schedule_id"] if unrun else None
+    for row in rows:
+        row["is_next_heat"] = (row["schedule_id"] == next_id)
 
     # Sequence gap flagging per pool
     for pool_num, threshold_check in [(1, lambda n: n < POOL2_THRESHOLD),

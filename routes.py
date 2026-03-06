@@ -299,8 +299,7 @@ function renderRow(row) {
 
   // Row class
   let cls = '';
-  if      (row.is_current_p1) cls = 'current-p1';
-  else if (row.is_current_p2) cls = 'current-p2';
+  if      (row.is_next_heat)  cls = 'current-p1';
   else if (!hasRace)          cls = 'unmatched';
   else if (!row.matched)      cls = 'pending-cts';
 
