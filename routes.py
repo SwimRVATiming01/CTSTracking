@@ -72,10 +72,11 @@ DASHBOARD_HTML = """
     #btn-restart:hover { background: #ff6b6b; color: #0d1117; }
 
     /* TABLE */
-    .container { overflow-x: auto; }
+    body { overflow: hidden; }
+    .container { overflow-x: auto; overflow-y: auto; height: calc(100vh - var(--header-height, 0px)); }
     table { width: 100%; border-collapse: collapse; }
     th { background: #0f3460; color: #a0c4ff; padding: 5px 6px; text-align: center;
-         font-size: 10px; white-space: nowrap; position: sticky; top: var(--header-height, 0px); }
+         font-size: 10px; white-space: nowrap; position: sticky; top: 0; z-index: 10; }
     td { padding: 4px 6px; border-bottom: 1px solid #1e2a4a; text-align: center; white-space: nowrap; }
     td.left { text-align: left; }
     tr:hover td { background: #222; }
@@ -260,7 +261,7 @@ function dismissSchedule() {
 // SCHEDULE DASHBOARD
 // ---------------------------------------------------------------------------
 function loadDashboard() {
-  fetch('/api/dashboard')
+  return fetch('/api/dashboard')
     .then(r => r.json())
     .then(data => {
       if (data.meet) document.getElementById('meet-name').textContent = data.meet.meet_name || '';
@@ -431,7 +432,7 @@ function updateHeaderHeight() {
 updateHeaderHeight();
 window.addEventListener('resize', updateHeaderHeight);
 
-loadDashboard();
+loadDashboard().then(() => updateHeaderHeight()).catch(() => updateHeaderHeight());
 checkPendingSchedule();
 setInterval(poll, {{ poll_interval }});
 </script>
