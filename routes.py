@@ -74,7 +74,7 @@ DASHBOARD_HTML = """
     /* TABLE */
     body { overflow: hidden; }
     .container { overflow-x: auto; overflow-y: auto; height: calc(100vh - var(--header-height, 0px)); }
-    table { width: 100%; border-collapse: collapse; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 33vh; }
     th { background: #0f3460; color: #a0c4ff; padding: 5px 6px; text-align: center;
          font-size: 10px; white-space: nowrap; position: sticky; top: 0; z-index: 10; }
     td { padding: 4px 6px; border-bottom: 1px solid #1e2a4a; text-align: center; white-space: nowrap; }
