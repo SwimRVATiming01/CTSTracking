@@ -100,7 +100,7 @@ DASHBOARD_HTML = """
     /* Delta */
     .late   { color: #ff6b6b; font-weight: bold; }
     .early  { color: #6bff6b; }
-    .ontime { color: #a0c4ff; }
+    .ontime { color: #ffffff; }
 
     /* Badges */
     .badge { display:inline-block; padding:1px 4px; border-radius:3px; font-size:10px; }
@@ -320,8 +320,8 @@ function renderRow(row) {
   let delta = '\u2014';
   if (row.delta_minutes !== null && row.delta_minutes !== undefined) {
     const d = row.delta_minutes;
-    const rounded = Math.ceil(Math.abs(d)) * (d < 0 ? -1 : 1);
-    const dc = rounded >= 1 ? 'late' : rounded <= -1 ? 'early' : 'ontime';
+    const rounded = Math.round(d);
+    const dc = rounded > 0 ? 'late' : rounded < 0 ? 'early' : 'ontime';
     delta = '<span class="' + dc + '">' + (rounded > 0 ? '+' : '') + rounded + '</span>';
   }
 
