@@ -85,8 +85,8 @@ DASHBOARD_HTML = """
     tr.pending-cts td { color: #ffd700; }
 
     /* Pool highlights */
-    tr.current-p1 td { background: #1a3a2a !important; border-left: 3px solid #00ff88; }
-    tr.current-p2 td { background: #1a2a3a !important; border-left: 3px solid #00aaff; }
+    tr.current-p1 td { background: #1a3a2a !important; }
+    tr.current-p2 td { background: #1a2a3a !important; }
 
     /* Lane cells */
     .lane-active  { background: #1a4a1a; color: #6bff6b; font-weight: bold; border-radius: 3px; }
