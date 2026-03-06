@@ -75,7 +75,7 @@ DASHBOARD_HTML = """
     .container { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
     th { background: #0f3460; color: #a0c4ff; padding: 5px 6px; text-align: center;
-         font-size: 10px; white-space: nowrap; position: sticky; top: 0; }
+         font-size: 10px; white-space: nowrap; position: sticky; top: var(--header-height, 0px); }
     td { padding: 4px 6px; border-bottom: 1px solid #1e2a4a; text-align: center; white-space: nowrap; }
     td.left { text-align: left; }
     tr:hover td { background: #222; }
@@ -423,6 +423,13 @@ function poll() {
   if (currentView === 'schedule') loadDashboard();
   else loadFullLog();
 }
+
+function updateHeaderHeight() {
+  const h = document.getElementById('sticky-top').offsetHeight;
+  document.documentElement.style.setProperty('--header-height', h + 'px');
+}
+updateHeaderHeight();
+window.addEventListener('resize', updateHeaderHeight);
 
 loadDashboard();
 checkPendingSchedule();
