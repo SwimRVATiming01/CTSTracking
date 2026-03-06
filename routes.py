@@ -89,7 +89,7 @@ DASHBOARD_HTML = """
     tr.current-p2 td { background: #1a2a3a !important; }
 
     /* Lane cells */
-    .lane-active  { background: #1a4a1a; color: #6bff6b; font-weight: bold; border-radius: 3px; }
+    .lane-active  { background: #1a4a1a; color: #1a4a1a; font-weight: bold; border-radius: 3px; }
     .lane-empty   { background: #4a1a1a; color: #ff6b6b; border-radius: 3px; }
     .lane-unknown { color: #333; }
 
