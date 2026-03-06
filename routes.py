@@ -321,7 +321,8 @@ function renderRow(row) {
   if (row.delta_minutes !== null && row.delta_minutes !== undefined) {
     const d = row.delta_minutes;
     const dc = d > 1 ? 'late' : d < -1 ? 'early' : 'ontime';
-    delta = '<span class="' + dc + '">' + (d > 0 ? '+' : '') + d.toFixed(1) + '</span>';
+    const rounded = Math.ceil(Math.abs(d)) * (d < 0 ? -1 : 1);
+    delta = '<span class="' + dc + '">' + (rounded > 0 ? '+' : '') + rounded + '</span>';
   }
 
   // Lane cells
