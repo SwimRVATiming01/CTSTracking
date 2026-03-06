@@ -35,6 +35,7 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("cts_tracker")
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 # ===========================================================================
