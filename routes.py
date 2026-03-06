@@ -57,14 +57,11 @@ DASHBOARD_HTML = """
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
     .status-pill.warn { background: #8b4000; }
 
-    /* ETA banner */
-    #eta-bar { background: #0d1f0d; border-bottom: 1px solid #1a4a1a; padding: 4px 14px;
-               font-size: 11px; color: #6bff6b; display: none; }
-    #eta-bar.show { display: block; }
-
     /* NAV */
     nav { background: #16213e; padding: 5px 14px; display: flex; gap: 6px;
           border-bottom: 1px solid #0f3460; align-items: center; }
+    #eta-bar { font-size: 11px; color: #6bff6b; display: none; }
+    #eta-bar.show { display: inline; }
     .view-btn { border: none; padding: 3px 9px; border-radius: 4px; cursor: pointer;
                 font-family: monospace; font-size: 11px; margin-left: auto; }
     #btn-schedule { background: #1a3a1a; color: #6bff6b; }
@@ -162,8 +159,8 @@ DASHBOARD_HTML = """
       <span class="status-pill" id="last-update">&#8212;</span>
     </div>
   </header>
-  <div id="eta-bar"></div>
   <nav>
+    <div id="eta-bar"></div>
     <button class="view-btn" id="btn-schedule" onclick="setView('schedule')">Schedule</button>
     <button class="view-btn" id="btn-log"      onclick="setView('log')">Full Log</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
