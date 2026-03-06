@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data (lives in ~/Documents/cts_tracker, not the repo)
+*.db
+*.log
+backups/
+snapshots/

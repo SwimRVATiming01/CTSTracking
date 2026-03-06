@@ -253,7 +253,7 @@ def ingest_cts_file(filepath):
     cts_data = parse_cts_file(filepath)
 
     if cts_data is None:
-        msg = "parse_cts_file not yet implemented"
+        msg = "Failed to parse CTS file — check log for details"
         _log_ingestion(filename, "cts", fn.get("machine_id"), fn.get("file_time"), "error", msg)
         return {"status": "error", "message": msg}
 
