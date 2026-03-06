@@ -3,6 +3,10 @@ routes.py - Flask app, dashboard HTML, and all API routes.
 """
 
 import logging
+import os
+import sys
+import threading
+import time
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template_string, request, abort
@@ -66,6 +70,8 @@ DASHBOARD_HTML = """
     #btn-schedule.active { background: #6bff6b; color: #0d1117; }
     #btn-log { background: #0f3460; color: #a0c4ff; }
     #btn-log.active { background: #a0c4ff; color: #0d1117; }
+    #btn-restart { background: #3a1a1a; color: #ff6b6b; margin-left: 0; }
+    #btn-restart:hover { background: #ff6b6b; color: #0d1117; }
 
     /* TABLE */
     .container { overflow-x: auto; }
@@ -159,6 +165,7 @@ DASHBOARD_HTML = """
   <nav>
     <button class="view-btn" id="btn-schedule" onclick="setView('schedule')">Schedule</button>
     <button class="view-btn" id="btn-log"      onclick="setView('log')">Full Log</button>
+    <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
 </div>
 
@@ -389,6 +396,21 @@ function loadFullLog() {
             '<td>' + notes + '</td>' +
             '</tr>';
         }).join('');
+    });
+}
+
+// ---------------------------------------------------------------------------
+// RESTART
+// ---------------------------------------------------------------------------
+function restartServer() {
+  if (!confirm('Restart the server?')) return;
+  document.getElementById('btn-restart').textContent = 'Restarting...';
+  fetch('/admin/restart', {method: 'POST'})
+    .then(() => {
+      setTimeout(() => { location.reload(); }, 3000);
+    })
+    .catch(() => {
+      setTimeout(() => { location.reload(); }, 3000);
     });
 }
 
@@ -674,6 +696,21 @@ def api_companion_both():
     if not meet:
         return jsonify({"pool1": {"active": False}, "pool2": {"active": False}})
     return jsonify(get_current_heat_state(meet["meet_id"]))
+
+
+# ---------------------------------------------------------------------------
+# ADMIN
+# ---------------------------------------------------------------------------
+
+@app.route("/admin/restart", methods=["POST"])
+def admin_restart():
+    """Restart the server process. Picks up any code changes."""
+    def _do_restart():
+        time.sleep(1)  # let Flask finish sending the response
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    log.info("Server restart requested via dashboard")
+    return jsonify({"status": "restarting"})
 
 
 # ---------------------------------------------------------------------------
