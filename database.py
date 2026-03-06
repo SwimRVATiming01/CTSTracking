@@ -561,15 +561,6 @@ def wipe_database():
     log.info("Database wiped — ready for new meet")
 
 
-def scrub_race_data(meet_id):
-    """Wipe only race data, leaving schedule intact."""
-    with get_write_conn() as conn:
-        conn.execute("DELETE FROM race_log WHERE meet_id=?", (meet_id,))
-        conn.execute("DELETE FROM pending_dolphin")
-        conn.execute("DELETE FROM pending_cts")
-    log.info(f"Race data scrubbed for meet={meet_id}")
-
-
 # ===========================================================================
 # BACKUP & SNAPSHOT
 # ===========================================================================
