@@ -4,6 +4,7 @@ routes.py - Flask app, dashboard HTML, and all API routes.
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -710,7 +711,8 @@ def admin_restart():
     """Restart the server process. Picks up any code changes."""
     def _do_restart():
         time.sleep(1)  # let Flask finish sending the response
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        subprocess.Popen([sys.executable] + sys.argv)
+        os._exit(0)
     threading.Thread(target=_do_restart, daemon=True).start()
     log.info("Server restart requested via dashboard")
     return jsonify({"status": "restarting"})
