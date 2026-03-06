@@ -3,6 +3,7 @@ routes.py - Flask app, dashboard HTML, and all API routes.
 """
 
 import logging
+from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template_string, request, abort
 
@@ -411,6 +412,46 @@ setInterval(poll, {{ poll_interval }});
 
 
 # ===========================================================================
+# HELPERS
+# ===========================================================================
+
+def _compute_final_eta(rows):
+    """
+    Compute ETA for the final heat based on the running average schedule delta.
+
+    Takes the average delta_minutes across all heats that have been run,
+    applies it to the projected start of the last scheduled heat.
+
+    Returns dict with time, projected, avg_delta — or None if insufficient data.
+    """
+    deltas = [r["delta_minutes"] for r in rows if r.get("delta_minutes") is not None]
+    if not deltas:
+        return None
+
+    avg_delta = round(sum(deltas) / len(deltas), 1)
+
+    scheduled = [r for r in rows if r.get("effective_start")]
+    if not scheduled:
+        return None
+
+    last_heat = max(scheduled, key=lambda r: r["heat_order"])
+    projected = last_heat["effective_start"]  # "HH:MM"
+
+    try:
+        base = datetime.strptime(projected, "%H:%M")
+        eta_dt = base + timedelta(minutes=avg_delta)
+        eta_time = eta_dt.strftime("%I:%M %p").lstrip("0")
+    except ValueError:
+        return None
+
+    return {
+        "time":      eta_time,
+        "projected": projected,
+        "avg_delta": avg_delta,
+    }
+
+
+# ===========================================================================
 # ROUTES — DASHBOARD
 # ===========================================================================
 
@@ -434,9 +475,10 @@ def api_dashboard():
     session = request.args.get("session")
     rows = get_race_dashboard(meet["meet_id"], session)
     return jsonify({
-        "meet":    meet,
-        "rows":    rows,
-        "pending": get_pending_summary(),
+        "meet":      meet,
+        "rows":      rows,
+        "pending":   get_pending_summary(),
+        "final_eta": _compute_final_eta(rows),
     })
 
 
@@ -565,7 +607,6 @@ def api_pending():
 
 @app.route("/health")
 def health():
-    from datetime import datetime
     meet = get_active_meet()
     return jsonify({
         "status": "ok",
