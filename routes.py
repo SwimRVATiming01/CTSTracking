@@ -362,7 +362,7 @@ function renderRow(row) {
     dolCell +
     '<td>' + (row.cts_start_time || '\u2014') + '</td>' +
     '<td>' + (row.missing_lanes || '\u2014') + '</td>' +
-    '<td>' + (active ? active.join(' ') : '\u2014') + '</td>' +
+    '<td>' + (active ? active.join('') : '\u2014') + '</td>' +
     '<td>' + finish + '</td>' +
     '</tr>';
 }
