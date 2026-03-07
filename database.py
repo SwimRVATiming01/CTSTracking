@@ -245,14 +245,22 @@ def clear_override(meet_id, session, event_id, heat):
     return result.rowcount > 0
 
 
-def reorder_heats(meet_id, session, ordered_ids):
-    """Reorder heats by providing schedule row IDs in desired order."""
+def reorder_heats(meet_id, ordered_ids, session=None):
+    """Reorder heats by providing schedule row IDs in desired order.
+    If session is provided, only rows in that session are updated.
+    """
     with get_write_conn() as conn:
         for new_order, row_id in enumerate(ordered_ids, start=1):
-            conn.execute(
-                "UPDATE schedule SET heat_order=? WHERE id=? AND meet_id=? AND session=?",
-                (new_order, row_id, meet_id, session)
-            )
+            if session:
+                conn.execute(
+                    "UPDATE schedule SET heat_order=? WHERE id=? AND meet_id=? AND session=?",
+                    (new_order, row_id, meet_id, session)
+                )
+            else:
+                conn.execute(
+                    "UPDATE schedule SET heat_order=? WHERE id=? AND meet_id=?",
+                    (new_order, row_id, meet_id)
+                )
     return True
 
 

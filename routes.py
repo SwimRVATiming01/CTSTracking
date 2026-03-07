@@ -72,8 +72,20 @@ DASHBOARD_HTML = """
     #btn-schedule.active { background: #6bff6b; color: #0d1117; }
     #btn-log { background: #0f3460; color: #a0c4ff; }
     #btn-log.active { background: #a0c4ff; color: #0d1117; }
+    #btn-reorder { background: #0f3460; color: #a0c4ff; }
+    #btn-reorder.active { background: #a0c4ff; color: #0d1117; }
     #btn-restart { background: #3a1a1a; color: #ff6b6b; margin-left: 0; }
     #btn-restart:hover { background: #ff6b6b; color: #0d1117; }
+
+    /* Reorder view */
+    .reorder-save { background:#0f3460; color:#a0c4ff; border:none; padding:5px 14px;
+                    border-radius:4px; cursor:pointer; font-family:monospace; font-size:12px;
+                    margin:10px 14px 6px; display:block; }
+    .reorder-save:hover { background:#a0c4ff; color:#0d1117; }
+    .arrow-btn { background:none; border:1px solid #333; border-radius:3px; color:#a0c4ff;
+                 cursor:pointer; font-size:11px; padding:1px 5px; margin:0 1px; }
+    .arrow-btn:hover { background:#0f3460; }
+    .arrow-btn:disabled { color:#333; border-color:#222; cursor:default; }
 
     /* TABLE */
     body { overflow: hidden; }
@@ -113,13 +125,13 @@ DASHBOARD_HTML = """
 
 
     /* Modal */
-    #modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+    .modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%;
                      background:rgba(0,0,0,0.75); z-index:200; align-items:center; justify-content:center; }
-    #modal-overlay.show { display:flex; }
-    #modal { background:#16213e; border:2px solid #e94560; border-radius:8px; padding:22px;
+    .modal-overlay.show { display:flex; }
+    .modal-box { background:#16213e; border:2px solid #e94560; border-radius:8px; padding:22px;
              max-width:460px; width:90%; }
-    #modal h2 { color:#e94560; margin-bottom:10px; font-size:14px; }
-    #modal p  { color:#a0c4ff; margin-bottom:5px; font-size:12px; }
+    .modal-box h2 { color:#e94560; margin-bottom:10px; font-size:14px; }
+    .modal-box p  { color:#a0c4ff; margin-bottom:5px; font-size:12px; }
     .meet-info { background:#0f3460; padding:9px; border-radius:4px; margin:10px 0;
                  font-size:12px; line-height:1.9; }
     .meet-info b { color:#a0c4ff; }
@@ -129,13 +141,23 @@ DASHBOARD_HTML = """
     .btn-scrub   { background:#e94560; color:white; }
     .btn-keep    { background:#0f3460; color:#a0c4ff; }
     .btn-dismiss { background:#2a2a2a; color:#888; }
+    .btn-add     { background:#1a3a1a; color:#6bff6b; }
+
+    /* Form inputs */
+    .modal-form { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin:12px 0; }
+    .modal-form label { color:#a0c4ff; font-size:11px; }
+    .modal-form input { background:#0f3460; border:1px solid #1e2a4a; border-radius:3px;
+                        color:#e0e0e0; font-family:monospace; font-size:12px;
+                        padding:4px 7px; width:100%; }
+    .modal-form .full-width { grid-column: 1 / -1; }
+    .modal-form input:focus { outline:1px solid #a0c4ff; }
   </style>
 </head>
 <body>
 
 <!-- Import Modal -->
-<div id="modal-overlay">
-  <div id="modal">
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal-box">
     <h2>&#x1F4CB; New Schedule Detected</h2>
     <p>A Meet Manager schedule CSV has been dropped into the schedule folder.</p>
     <div class="meet-info">
@@ -147,6 +169,38 @@ DASHBOARD_HTML = """
     <button class="modal-btn btn-scrub"   onclick="approveSchedule(true)">Scrub Race Data &amp; Import</button>
     <button class="modal-btn btn-keep"    onclick="approveSchedule(false)">Keep Race Data &amp; Import</button>
     <button class="modal-btn btn-dismiss" onclick="dismissSchedule()">Dismiss</button>
+  </div>
+</div>
+
+<!-- Add Heat Modal -->
+<div id="add-heat-overlay" class="modal-overlay">
+  <div class="modal-box">
+    <h2>+ Add Schedule Entry</h2>
+    <div class="modal-form">
+      <div>
+        <label>Event #</label>
+        <input id="ah-event" type="text" placeholder="e.g. 22">
+      </div>
+      <div>
+        <label>Heat #</label>
+        <input id="ah-heat" type="text" placeholder="e.g. 3">
+      </div>
+      <div class="full-width">
+        <label>Event Name</label>
+        <input id="ah-name" type="text" placeholder="e.g. Men 200 Butterfly">
+      </div>
+      <div>
+        <label>Projected Start (HH:MM)</label>
+        <input id="ah-start" type="text" placeholder="e.g. 09:30">
+      </div>
+      <div>
+        <label>Session</label>
+        <input id="ah-session" type="text" placeholder="1" value="1">
+      </div>
+    </div>
+    <div id="ah-error" style="color:#ff6b6b;font-size:11px;min-height:16px;"></div>
+    <button class="modal-btn btn-add"     onclick="submitAddHeat()">Add Entry</button>
+    <button class="modal-btn btn-dismiss" onclick="closeAddHeat()">Cancel</button>
   </div>
 </div>
 
@@ -166,6 +220,8 @@ DASHBOARD_HTML = """
     <div id="eta-bar"></div>
     <button class="view-btn" id="btn-schedule" onclick="setView('schedule')">Schedule</button>
     <button class="view-btn" id="btn-log"      onclick="setView('log')">Full Log</button>
+    <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
+    <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
 </div>
@@ -189,6 +245,24 @@ DASHBOARD_HTML = """
       </tr>
     </thead>
     <tbody id="race-table"></tbody>
+  </table>
+</div>
+
+<!-- Reorder View -->
+<div class="container" id="reorder-view" style="display:none">
+  <button class="reorder-save" onclick="saveReorder()">Save Order</button>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:36px"></th>
+        <th class="left">Event</th>
+        <th>Heat</th>
+        <th class="left">Event Name</th>
+        <th>Projected</th>
+        <th>CTS #</th>
+      </tr>
+    </thead>
+    <tbody id="reorder-table"></tbody>
   </table>
 </div>
 
@@ -217,9 +291,12 @@ function setView(v) {
   currentView = v;
   document.getElementById('schedule-view').style.display = v === 'schedule' ? '' : 'none';
   document.getElementById('log-view').style.display      = v === 'log'      ? '' : 'none';
+  document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
-  if (v === 'log') loadFullLog();
+  document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
+  if (v === 'log')     loadFullLog();
+  if (v === 'reorder') loadReorderView();
 }
 setView('schedule');  // set initial active state
 
@@ -238,6 +315,7 @@ function checkPendingSchedule() {
       } else {
         document.getElementById('modal-overlay').classList.remove('show');
       }
+
     });
 }
 
@@ -255,6 +333,57 @@ function approveSchedule(scrub) {
 function dismissSchedule() {
   fetch('/api/schedule/dismiss', {method: 'POST'})
     .then(() => document.getElementById('modal-overlay').classList.remove('show'));
+}
+
+// ---------------------------------------------------------------------------
+// ADD HEAT MODAL
+// ---------------------------------------------------------------------------
+function openAddHeat() {
+  document.getElementById('ah-event').value   = '';
+  document.getElementById('ah-heat').value    = '';
+  document.getElementById('ah-name').value    = '';
+  document.getElementById('ah-start').value   = '';
+  document.getElementById('ah-session').value = '1';
+  document.getElementById('ah-error').textContent = '';
+  document.getElementById('add-heat-overlay').classList.add('show');
+  document.getElementById('ah-event').focus();
+}
+
+function closeAddHeat() {
+  document.getElementById('add-heat-overlay').classList.remove('show');
+}
+
+function submitAddHeat() {
+  const event   = document.getElementById('ah-event').value.trim();
+  const heat    = document.getElementById('ah-heat').value.trim();
+  const name    = document.getElementById('ah-name').value.trim();
+  const start   = document.getElementById('ah-start').value.trim();
+  const session = document.getElementById('ah-session').value.trim() || '1';
+  const errEl   = document.getElementById('ah-error');
+
+  if (!event || !heat || !name) {
+    errEl.textContent = 'Event #, Heat #, and Event Name are required.';
+    return;
+  }
+
+  fetch('/api/schedule/heat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      event_id: event, heat: heat, event_name: name,
+      projected_start: start || null, session: session
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.added) {
+      closeAddHeat();
+      loadDashboard();
+    } else {
+      errEl.textContent = 'Failed to add entry.';
+    }
+  })
+  .catch(() => { errEl.textContent = 'Request failed.'; });
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +539,62 @@ function restartServer() {
     .catch(() => {
       setTimeout(() => { location.reload(); }, 3000);
     });
+}
+
+// ---------------------------------------------------------------------------
+// REORDER
+// ---------------------------------------------------------------------------
+let reorderRows = [];
+
+function loadReorderView() {
+  fetch('/api/dashboard')
+    .then(r => r.json())
+    .then(data => {
+      reorderRows = (data.rows || []).map(r => ({
+        id:         r.schedule_id,
+        event_id:   r.event_id,
+        heat:       r.heat,
+        event_name: r.event_name,
+        projected:  r.effective_start,
+        cts_race_num: r.cts_race_num,
+      }));
+      renderReorderTable();
+    });
+}
+
+function renderReorderTable() {
+  document.getElementById('reorder-table').innerHTML = reorderRows.map((row, i) => {
+    const upDis  = i === 0 ? ' disabled' : '';
+    const dnDis  = i === reorderRows.length - 1 ? ' disabled' : '';
+    return '<tr>' +
+      '<td>' +
+        '<button class="arrow-btn"' + upDis + ' onclick="moveRow(' + i + ',-1)">&#9650;</button>' +
+        '<button class="arrow-btn"' + dnDis + ' onclick="moveRow(' + i + ',1)">&#9660;</button>' +
+      '</td>' +
+      '<td class="left">' + row.event_id + '</td>' +
+      '<td>' + row.heat + '</td>' +
+      '<td class="left">' + (row.event_name || '\u2014') + '</td>' +
+      '<td>' + (row.projected || '\u2014') + '</td>' +
+      '<td>' + (row.cts_race_num ?? '\u2014') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function moveRow(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= reorderRows.length) return;
+  [reorderRows[i], reorderRows[j]] = [reorderRows[j], reorderRows[i]];
+  renderReorderTable();
+}
+
+function saveReorder() {
+  fetch('/api/schedule/reorder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ordered_ids: reorderRows.map(r => r.id)})
+  })
+  .then(r => r.json())
+  .then(() => loadReorderView());
 }
 
 // ---------------------------------------------------------------------------
@@ -596,7 +781,7 @@ def api_reorder():
     meet = get_active_meet()
     if not meet:
         abort(400, "No active meet")
-    ok = reorder_heats(meet["meet_id"], data["session"], data["ordered_ids"])
+    ok = reorder_heats(meet["meet_id"], data["ordered_ids"], session=data.get("session"))
     return jsonify({"reordered": ok})
 
 
