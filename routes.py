@@ -308,7 +308,6 @@ function renderRow(row) {
   let cls = '';
   if      (row.is_next_heat)  cls = 'current-p1';
   else if (!hasRace)          cls = 'unmatched';
-  else if (!row.matched)      cls = 'pending-cts';
 
   // Event — hide duplicate
   const showEv = row.event_id !== lastEventId;
