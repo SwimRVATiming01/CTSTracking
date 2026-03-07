@@ -111,8 +111,6 @@ DASHBOARD_HTML = """
     .badge-yellow { background:#4a4a00; color:#ffd700; }
     .badge-gray   { background:#2a2a2a; color:#888; }
 
-    /* Full log orphans */
-    tr.orphan td { color: #ff8c00; font-style: italic; }
 
     /* Modal */
     #modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%;
@@ -199,10 +197,9 @@ DASHBOARD_HTML = """
   <table>
     <thead>
       <tr>
-        <th>Event</th><th>Heat</th><th>CTS #</th><th>CTS Start</th>
-        <th>Dolphin #</th><th>Dolphin Time</th>
-        <th>Machine (CTS)</th><th>Machine (Dolphin)</th>
-        <th>Matched</th><th>Ingested</th><th>Notes</th>
+        <th>Time</th><th>Type</th><th>Machine</th>
+        <th>Event</th><th>Heat</th><th>CTS #</th><th>Dolphin #</th>
+        <th>Start</th><th>File</th><th>Status</th>
       </tr>
     </thead>
     <tbody id="log-table"></tbody>
@@ -378,26 +375,24 @@ function loadFullLog() {
     .then(data => {
       document.getElementById('log-table').innerHTML =
         (data.rows || []).map(row => {
-          const cls   = row.is_orphan ? 'orphan' : '';
-          const notes = row.is_orphan
-            ? '<span style="color:#ff8c00">orphan</span>'
-            : row.manually_edited
-              ? '<span style="color:#ffd700">manual</span>'
-              : '';
-          const dtime = row.dolphin_file_time
-            ? row.dolphin_file_time.substring(11, 19) : '\u2014';
-          return '<tr class="' + cls + '">' +
+          const time    = row.ingested_at ? row.ingested_at.substring(11, 19) : '\u2014';
+          const type    = row.file_type ? row.file_type.toUpperCase() : '\u2014';
+          const typeCls = row.file_type === 'cts' ? 'color:#a0c4ff' : row.file_type === 'dolphin' ? 'color:#ffd700' : '';
+          const status  = row.status === 'ok'
+            ? '<span style="color:#6bff6b">ok</span>'
+            : '<span style="color:#ff6b6b">' + (row.error_message || 'error') + '</span>';
+          const fname   = row.filename ? row.filename.substring(0, 40) : '\u2014';
+          return '<tr>' +
+            '<td>' + time + '</td>' +
+            '<td style="' + typeCls + '">' + type + '</td>' +
+            '<td>' + (row.source_machine ?? '\u2014') + '</td>' +
             '<td>' + (row.event_id ?? '\u2014') + '</td>' +
             '<td>' + (row.heat ?? '\u2014') + '</td>' +
             '<td>' + (row.cts_race_num ?? '\u2014') + '</td>' +
-            '<td>' + (row.cts_start_time ?? '\u2014') + '</td>' +
             '<td>' + (row.dolphin_race_num ?? '\u2014') + '</td>' +
-            '<td>' + dtime + '</td>' +
-            '<td>' + (row.cts_source_machine ?? '\u2014') + '</td>' +
-            '<td>' + (row.dolphin_source_machine ?? '\u2014') + '</td>' +
-            '<td>' + (row.matched ? '&#10003;' : '\u2014') + '</td>' +
-            '<td>' + (row.ingested_at ? row.ingested_at.substring(11, 19) : '\u2014') + '</td>' +
-            '<td>' + notes + '</td>' +
+            '<td>' + (row.cts_start_time ?? '\u2014') + '</td>' +
+            '<td class="left" style="font-size:10px">' + fname + '</td>' +
+            '<td>' + status + '</td>' +
             '</tr>';
         }).join('');
     });

@@ -424,21 +424,34 @@ def get_race_dashboard(meet_id, session=None):
 
 def get_full_log(meet_id):
     """
-    Return raw race_log for a meet, all entries unfiltered.
-    Includes orphan flag (no matching schedule row).
+    Return every ingested file in chronological order.
+    Joins ingestion_log with race_log for event/heat/race# context where available.
+    One row per file regardless of match status.
     """
     with get_conn() as conn:
         rows = conn.execute(
-            """SELECT r.*,
-                      CASE WHEN s.id IS NULL THEN 1 ELSE 0 END AS is_orphan
-               FROM race_log r
-               LEFT JOIN schedule s
-                   ON s.meet_id = r.meet_id
-                   AND s.event_id = r.event_id
-                   AND s.heat = r.heat
-               WHERE r.meet_id=?
-               ORDER BY r.ingested_at ASC""",
-            (meet_id,)
+            """SELECT
+                   i.ingested_at,
+                   i.file_type,
+                   i.filename,
+                   i.source_machine,
+                   i.file_time,
+                   i.status,
+                   i.error_message,
+                   r.event_id,
+                   r.heat,
+                   r.cts_race_num,
+                   r.cts_start_time,
+                   r.dolphin_race_num,
+                   r.matched
+               FROM ingestion_log i
+               LEFT JOIN race_log r
+                   ON (
+                       (i.file_type = 'cts'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
+                    OR (i.file_type = 'dolphin' AND r.dolphin_filename = i.filename AND r.meet_id = ?)
+                   )
+               ORDER BY i.ingested_at ASC""",
+            (meet_id, meet_id)
         ).fetchall()
     return [dict(r) for r in rows]
 
