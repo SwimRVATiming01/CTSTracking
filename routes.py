@@ -401,8 +401,7 @@ function loadDashboard() {
       if (eta && eta.time) {
         const sign = eta.avg_delta > 0 ? '+' : '';
         etaBar.textContent =
-          'Final Heat Start: ' + eta.time +
-          '  (projected ' + eta.projected + '  ' + sign + eta.avg_delta + ' min running avg)';
+          'Final Heat Start: ' + eta.time + '  (' + sign + eta.avg_delta + ' min)';
         etaBar.classList.add('show');
       } else {
         etaBar.classList.remove('show');
