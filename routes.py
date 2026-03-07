@@ -272,7 +272,7 @@ function loadDashboard() {
       if (eta && eta.time) {
         const sign = eta.avg_delta > 0 ? '+' : '';
         etaBar.textContent =
-          'Final Heat ETA: ' + eta.time +
+          'Final Heat Start: ' + eta.time +
           '  (projected ' + eta.projected + '  ' + sign + eta.avg_delta + ' min running avg)';
         etaBar.classList.add('show');
       } else {
@@ -449,13 +449,16 @@ def _compute_final_eta(rows):
     Takes the average delta_minutes across all heats that have been run,
     applies it to the projected start of the last scheduled heat.
 
+    Uses the most recently run heat's delta, not a running average.
     Returns dict with time, projected, avg_delta — or None if insufficient data.
     """
-    deltas = [r["delta_minutes"] for r in rows if r.get("delta_minutes") is not None]
-    if not deltas:
+    # Use the most recently run heat's delta (last heat with delta data by heat_order)
+    run_rows = [r for r in rows if r.get("delta_minutes") is not None]
+    if not run_rows:
         return None
 
-    avg_delta = round(sum(deltas) / len(deltas), 1)
+    last_run = max(run_rows, key=lambda r: r["heat_order"])
+    last_delta = round(last_run["delta_minutes"], 1)
 
     scheduled = [r for r in rows if r.get("effective_start")]
     if not scheduled:
@@ -466,15 +469,15 @@ def _compute_final_eta(rows):
 
     try:
         base = datetime.strptime(projected, "%H:%M")
-        eta_dt = base + timedelta(minutes=avg_delta)
+        eta_dt = base + timedelta(minutes=last_delta)
         eta_time = eta_dt.strftime("%I:%M %p").lstrip("0")
     except ValueError:
         return None
 
     return {
-        "time":      eta_time,
-        "projected": projected,
-        "avg_delta": avg_delta,
+        "time":       eta_time,
+        "projected":  projected,
+        "avg_delta":  last_delta,
     }
 
 
