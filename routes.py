@@ -31,6 +31,10 @@ log = logging.getLogger("cts_tracker")
 
 app = Flask(__name__)
 
+# Companion-controlled current heat overrides (None = use auto-detection)
+_companion_p1 = None  # {"event_id": str, "heat": str}
+_companion_p2 = None
+
 
 # ===========================================================================
 # DASHBOARD HTML
@@ -502,6 +506,22 @@ def api_dashboard():
         return jsonify({"error": "No active meet", "rows": [], "meet": None, "pending": {}})
     session = request.args.get("session")
     rows = get_race_dashboard(meet["meet_id"], session)
+
+    # Apply Companion heat overrides if set
+    if _companion_p1 or _companion_p2:
+        for row in rows:
+            row["is_next_heat"] = False
+        if _companion_p1:
+            for row in rows:
+                if (str(row.get("event_id")) == str(_companion_p1["event_id"])
+                        and str(row.get("heat")) == str(_companion_p1["heat"])):
+                    row["is_next_heat"] = True
+        if _companion_p2:
+            for row in rows:
+                if (str(row.get("event_id")) == str(_companion_p2["event_id"])
+                        and str(row.get("heat")) == str(_companion_p2["heat"])):
+                    row["is_next_heat"] = True
+
     return jsonify({
         "meet":      meet,
         "rows":      rows,
@@ -694,6 +714,54 @@ def api_companion_pool2():
         return jsonify({"active": False})
     state = get_current_heat_state(meet["meet_id"])
     return jsonify(state.get("pool2", {"active": False}))
+
+
+@app.route("/api/companion/pool1/set_heat", methods=["POST"])
+def api_companion_set_heat_p1():
+    """Set Pool 1 current heat from Bitfocus Companion.
+    POST /api/companion/pool1/set_heat?event=$(streamline:event)&heat=$(streamline:heat)
+    """
+    global _companion_p1
+    event = request.args.get("event")
+    heat  = request.args.get("heat")
+    if event is None or heat is None:
+        return jsonify({"error": "Missing event or heat parameter"}), 400
+    _companion_p1 = {"event_id": event, "heat": heat}
+    log.info(f"Companion P1 heat set: Event={event} Heat={heat}")
+    return jsonify({"status": "ok", "pool": 1, "event_id": event, "heat": heat})
+
+
+@app.route("/api/companion/pool1/clear_heat", methods=["POST"])
+def api_companion_clear_heat_p1():
+    """Clear Pool 1 Companion override — reverts to auto-detection."""
+    global _companion_p1
+    _companion_p1 = None
+    log.info("Companion P1 heat override cleared")
+    return jsonify({"status": "ok", "pool": 1})
+
+
+@app.route("/api/companion/pool2/set_heat", methods=["POST"])
+def api_companion_set_heat_p2():
+    """Set Pool 2 current heat from Bitfocus Companion.
+    POST /api/companion/pool2/set_heat?event=$(streamline_2:event)&heat=$(streamline_2:heat)
+    """
+    global _companion_p2
+    event = request.args.get("event")
+    heat  = request.args.get("heat")
+    if event is None or heat is None:
+        return jsonify({"error": "Missing event or heat parameter"}), 400
+    _companion_p2 = {"event_id": event, "heat": heat}
+    log.info(f"Companion P2 heat set: Event={event} Heat={heat}")
+    return jsonify({"status": "ok", "pool": 2, "event_id": event, "heat": heat})
+
+
+@app.route("/api/companion/pool2/clear_heat", methods=["POST"])
+def api_companion_clear_heat_p2():
+    """Clear Pool 2 Companion override — reverts to auto-detection."""
+    global _companion_p2
+    _companion_p2 = None
+    log.info("Companion P2 heat override cleared")
+    return jsonify({"status": "ok", "pool": 2})
 
 
 @app.route("/api/companion")
