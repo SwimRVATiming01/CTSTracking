@@ -84,7 +84,7 @@ DASHBOARD_HTML = """
     tr.pending-cts td { color: #ffd700; }
 
     /* Pool highlights */
-    tr.current-p1 td { background: #1a3a2a !important; }
+    tr.current-p1 td { background: #0d5c2e !important; }
     tr.current-p2 td { background: #1a2a3a !important; }
 
     /* Lane cells */
