@@ -696,12 +696,14 @@ def api_dashboard():
         if _companion_p1:
             for row in rows:
                 if (str(row.get("event_id")) == str(_companion_p1["event_id"])
-                        and str(row.get("heat")) == str(_companion_p1["heat"])):
+                        and (str(row.get("heat")) == str(_companion_p1["heat"])
+                             or str(row.get("heat_label") or "") == str(_companion_p1["heat"]))):
                     row["is_next_heat"] = True
         if _companion_p2:
             for row in rows:
                 if (str(row.get("event_id")) == str(_companion_p2["event_id"])
-                        and str(row.get("heat")) == str(_companion_p2["heat"])):
+                        and (str(row.get("heat")) == str(_companion_p2["heat"])
+                             or str(row.get("heat_label") or "") == str(_companion_p2["heat"]))):
                     row["is_next_heat"] = True
 
     return jsonify({
