@@ -101,7 +101,7 @@ def import_schedule(filepath, meet_id, session_override=None):
                 if not stats["session"]:
                     stats["session"] = session
                 if not stats["meet_name"]:
-                    stats["meet_name"] = meet_raw
+                    stats["meet_name"] = _clean_meet_name(meet_raw)
 
                 event_id, event_name = _parse_event_col(event_raw)
                 if not event_id:
@@ -185,6 +185,11 @@ def import_schedule(filepath, meet_id, session_override=None):
     return stats
 
 
+def _clean_meet_name(raw):
+    """Strip trailing date range e.g. ' - 2026-03-05 to 2026-03-08'."""
+    return re.sub(r'\s*-\s*\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\s*$', '', raw).strip()
+
+
 def _extract_meet_info_from_csv(filepath):
     """
     Parse meet name, date and session from MM CSV without fully importing it.
@@ -200,7 +205,7 @@ def _extract_meet_info_from_csv(filepath):
                 export_raw  = row[config.MM_COL_EXPORT_INFO].strip()
                 session_raw = row[config.MM_COL_SESSION].strip()
                 if meet_raw:
-                    info["meet_name"] = meet_raw
+                    info["meet_name"] = _clean_meet_name(meet_raw)
                 if session_raw:
                     info["session"] = session_raw
                 m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", export_raw)
