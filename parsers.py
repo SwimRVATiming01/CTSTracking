@@ -173,15 +173,47 @@ def parse_cts_file(filepath):
                         pass
             break
 
-    # --- Active lanes: find all "Lane N" labels ---
+    # --- Active lanes: detect via first timing row below lane headers ---
+    #
+    # CTS always prints all 8 "Lane N" labels regardless of whether a lane
+    # has a swimmer. Instead, look at the first row of per-lane split times
+    # below the headers (50yd splits for 100yd+ events). Each active lane
+    # has a split time within ~100 units of its lane header X position;
+    # empty lanes have no data there.
     lane_labels = [
-        (float(x), int(re.search(r"\d+", t).group()))
+        (float(x), float(y), int(re.search(r"\d+", t).group()))
         for x, y, t in glyphs if re.match(r"Lane \d+$", t)
     ]
-    active = sorted(set(n for _, n in lane_labels))
-    result["active_lanes"]      = active
-    result["missing_lanes"]     = [l for l in range(1, 9) if l not in active]
-    result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
+
+    if lane_labels:
+        lane_xs = {lane_num: lx for lx, ly, lane_num in lane_labels}
+        lane_header_y = lane_labels[0][1]
+
+        TIME_RE = re.compile(r"^\d+:\d{2}\.\d{2}$|^\d+\.\d{2}$")
+        timing_below = [
+            (float(x), float(y)) for x, y, t in glyphs
+            if float(y) > lane_header_y and TIME_RE.match(t)
+        ]
+
+        active = sorted(lane_xs.keys())  # default: all lanes active
+        if timing_below:
+            first_row_y = min(y for x, y in timing_below)
+            first_row_xs = [x for x, y in timing_below if abs(y - first_row_y) < 50]
+            matched = set()
+            for data_x in first_row_xs:
+                best_lane, best_lx = min(lane_xs.items(), key=lambda kv: abs(kv[1] - data_x))
+                if abs(best_lx - data_x) < 100:
+                    matched.add(best_lane)
+            if matched:
+                active = sorted(matched)
+
+        result["active_lanes"]      = active
+        result["missing_lanes"]     = [l for l in range(1, 9) if l not in active]
+        result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
+    else:
+        result["active_lanes"]      = list(range(1, 9))
+        result["missing_lanes"]     = []
+        result["missing_lanes_str"] = ""
 
     # --- Off Times: label "Off. Time" then concatenated times at same Y ---
     for x, y, t in glyphs:
