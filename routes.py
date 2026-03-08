@@ -101,7 +101,7 @@ DASHBOARD_HTML = """
 
     /* Pool highlights */
     tr.current-p1 td { background: #00c800 !important; color: #0d1117 !important; }
-    tr.current-p2 td { background: #1a2a3a !important; }
+    tr.current-p2 td { background: #00b4ff !important; color: #0d1117 !important; }
 
     /* Lane cells */
     .lane-active  { background: #1a4a1a; color: #1a4a1a; font-weight: bold; border-radius: 3px; }
@@ -434,8 +434,9 @@ function renderRow(row) {
 
   // Row class
   let cls = '';
-  if      (row.is_next_heat)  cls = 'current-p1';
-  else if (!hasRace)          cls = 'unmatched';
+  if      (row.is_next_heat)    cls = 'current-p1';
+  else if (row.is_next_heat_p2) cls = 'current-p2';
+  else if (!hasRace)            cls = 'unmatched';
 
   // Event — hide duplicate
   const showEv = row.event_id !== lastEventId;
@@ -691,7 +692,8 @@ def api_dashboard():
     # Apply Companion heat overrides if set
     if _companion_p1 or _companion_p2:
         for row in rows:
-            row["is_next_heat"] = False
+            row["is_next_heat"]    = False
+            row["is_next_heat_p2"] = False
         if _companion_p1:
             for row in rows:
                 if (str(row.get("event_id")) == str(_companion_p1["event_id"])
@@ -703,7 +705,7 @@ def api_dashboard():
                 if (str(row.get("event_id")) == str(_companion_p2["event_id"])
                         and (str(row.get("heat")) == str(_companion_p2["heat"])
                              or str(row.get("heat_label") or "") == str(_companion_p2["heat"]))):
-                    row["is_next_heat"] = True
+                    row["is_next_heat_p2"] = True
 
     return jsonify({
         "meet":      meet,
