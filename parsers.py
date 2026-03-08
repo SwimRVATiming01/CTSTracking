@@ -173,50 +173,68 @@ def parse_cts_file(filepath):
                         pass
             break
 
-    # --- Active lanes: nearest-lane assignment across all timing rows ---
+    # --- Active lanes ---
     #
-    # CTS always prints all 8 "Lane N" labels regardless of whether a lane
-    # has a swimmer. Instead, collect ALL per-lane timing glyphs below the
-    # lane headers and assign each to its nearest lane header by X position.
-    # Lanes are ~1700 units apart; observed max X drift for longer times is
-    # ~380 units, well within the 850-unit midpoint — so nearest-lane
-    # assignment is always unambiguous.
+    # Primary method: By Lane results table.
+    #   CTS prints one row per finishing swimmer in the By Lane table.
+    #   Each row has a 2-digit glyph encoding lane+place (e.g. "21" = lane 2,
+    #   place 1). The first digit is the lane number. This works for any
+    #   event distance and is unaffected by missed touchpads, as long as the
+    #   swimmer has a finish time. Assumes 8-lane pool (lane/place always
+    #   single digits).
     #
-    # Using all rows (not just the first) handles missed first splits in
-    # 100yd+ events — the swimmer still has later splits or a finish time.
-    # Limitation: if a swimmer has zero electronic time (missed all touches),
-    # the lane cannot be detected from the file.
+    # Fallback: nearest-lane assignment across all timing rows.
+    #   Used when no By Lane entries are found (e.g. test/scratch files).
+
     lane_labels = [
         (float(x), float(y), int(re.search(r"\d+", t).group()))
         for x, y, t in glyphs if re.match(r"Lane \d+$", t)
     ]
 
-    if lane_labels:
+    active = None
+
+    # --- Primary: By Lane table ---
+    by_lane_glyph = next(
+        ((float(x), float(y)) for x, y, t in glyphs if t == "By Lane"), None
+    )
+    if by_lane_glyph and lane_labels:
+        by_lane_x, by_lane_y = by_lane_glyph
+        lane_header_y = lane_labels[0][1]
+        # 2-digit lane+place entries sit left of the By Lane header, between
+        # the By Lane label Y and the lane header row Y
+        by_lane_entries = [
+            t for x, y, t in glyphs
+            if re.match(r"^\d{2}$", t)
+            and float(x) < by_lane_x
+            and by_lane_y < float(y) < lane_header_y
+            and 1 <= int(t[0]) <= 8
+            and 1 <= int(t[1]) <= 8
+        ]
+        if by_lane_entries:
+            active = sorted(set(int(t[0]) for t in by_lane_entries))
+
+    # --- Fallback: timing rows with nearest-lane assignment ---
+    if active is None and lane_labels:
         lane_xs = {lane_num: lx for lx, ly, lane_num in lane_labels}
         lane_header_y = lane_labels[0][1]
-
         TIME_RE = re.compile(r"^\d+:\d{2}\.\d{2}$|^\d+\.\d{2}$")
         timing_below = [
             float(x) for x, y, t in glyphs
             if float(y) > lane_header_y and TIME_RE.match(t)
         ]
-
-        active = sorted(lane_xs.keys())  # default: all lanes active
         if timing_below:
             matched = set()
             for data_x in timing_below:
-                nearest_lane = min(lane_xs.keys(), key=lambda n: abs(lane_xs[n] - data_x))
-                matched.add(nearest_lane)
-            if matched:
-                active = sorted(matched)
+                nearest = min(lane_xs.keys(), key=lambda n: abs(lane_xs[n] - data_x))
+                matched.add(nearest)
+            active = sorted(matched)
 
-        result["active_lanes"]      = active
-        result["missing_lanes"]     = [l for l in range(1, 9) if l not in active]
-        result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
-    else:
-        result["active_lanes"]      = list(range(1, 9))
-        result["missing_lanes"]     = []
-        result["missing_lanes_str"] = ""
+    if active is None:
+        active = list(range(1, 9))
+
+    result["active_lanes"]      = active
+    result["missing_lanes"]     = [l for l in range(1, 9) if l not in active]
+    result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
 
     # --- Off Times: label "Off. Time" then concatenated times at same Y ---
     for x, y, t in glyphs:
