@@ -82,10 +82,8 @@ DASHBOARD_HTML = """
                     border-radius:4px; cursor:pointer; font-family:monospace; font-size:12px;
                     margin:10px 14px 6px; display:block; }
     .reorder-save:hover { background:#a0c4ff; color:#0d1117; }
-    .arrow-btn { background:none; border:1px solid #333; border-radius:3px; color:#a0c4ff;
-                 cursor:pointer; font-size:11px; padding:1px 5px; margin:0 1px; }
-    .arrow-btn:hover { background:#0f3460; }
-    .arrow-btn:disabled { color:#333; border-color:#222; cursor:default; }
+    .drag-handle { cursor: grab; color: #555; padding: 0 6px; user-select: none; }
+    tr.drag-over td { background: #1a3a5a !important; }
 
     /* TABLE */
     body { overflow: hidden; }
@@ -345,6 +343,14 @@ function openAddHeat() {
   document.getElementById('ah-start').value   = '';
   document.getElementById('ah-session').value = '1';
   document.getElementById('ah-error').textContent = '';
+  // Pre-populate session from active schedule
+  fetch('/api/sessions')
+    .then(r => r.json())
+    .then(data => {
+      const sessions = data.sessions || [];
+      if (sessions.length > 0)
+        document.getElementById('ah-session').value = sessions[0];
+    });
   document.getElementById('add-heat-overlay').classList.add('show');
   document.getElementById('ah-event').focus();
 }
@@ -361,8 +367,8 @@ function submitAddHeat() {
   const session = document.getElementById('ah-session').value.trim() || '1';
   const errEl   = document.getElementById('ah-error');
 
-  if (!event || !heat || !name) {
-    errEl.textContent = 'Event #, Heat #, and Event Name are required.';
+  if (!event || !heat) {
+    errEl.textContent = 'Event # and Heat # are required.';
     return;
   }
 
@@ -562,15 +568,17 @@ function loadReorderView() {
     });
 }
 
+let dragSrcIndex = null;
+
 function renderReorderTable() {
   document.getElementById('reorder-table').innerHTML = reorderRows.map((row, i) => {
-    const upDis  = i === 0 ? ' disabled' : '';
-    const dnDis  = i === reorderRows.length - 1 ? ' disabled' : '';
-    return '<tr>' +
-      '<td>' +
-        '<button class="arrow-btn"' + upDis + ' onclick="moveRow(' + i + ',-1)">&#9650;</button>' +
-        '<button class="arrow-btn"' + dnDis + ' onclick="moveRow(' + i + ',1)">&#9660;</button>' +
-      '</td>' +
+    return '<tr draggable="true" data-index="' + i + '" ' +
+      'ondragstart="onDragStart(event,' + i + ')" ' +
+      'ondragover="onDragOver(event)" ' +
+      'ondragleave="onDragLeave(event)" ' +
+      'ondrop="onDrop(event,' + i + ')" ' +
+      'ondragend="onDragEnd(event)">' +
+      '<td><span class="drag-handle">&#9776;</span></td>' +
       '<td class="left">' + row.event_id + '</td>' +
       '<td>' + row.heat + '</td>' +
       '<td class="left">' + (row.event_name || '\u2014') + '</td>' +
@@ -580,11 +588,34 @@ function renderReorderTable() {
   }).join('');
 }
 
-function moveRow(i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= reorderRows.length) return;
-  [reorderRows[i], reorderRows[j]] = [reorderRows[j], reorderRows[i]];
+function onDragStart(e, i) {
+  dragSrcIndex = i;
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+function onDrop(e, i) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if (dragSrcIndex === null || dragSrcIndex === i) return;
+  const moved = reorderRows.splice(dragSrcIndex, 1)[0];
+  reorderRows.splice(i, 0, moved);
+  dragSrcIndex = null;
   renderReorderTable();
+}
+
+function onDragEnd(e) {
+  dragSrcIndex = null;
+  document.querySelectorAll('#reorder-table tr').forEach(r => r.classList.remove('drag-over'));
 }
 
 function saveReorder() {
