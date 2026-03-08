@@ -173,13 +173,19 @@ def parse_cts_file(filepath):
                         pass
             break
 
-    # --- Active lanes: detect via first timing row below lane headers ---
+    # --- Active lanes: nearest-lane assignment across all timing rows ---
     #
     # CTS always prints all 8 "Lane N" labels regardless of whether a lane
-    # has a swimmer. Instead, look at the first row of per-lane split times
-    # below the headers (50yd splits for 100yd+ events). Each active lane
-    # has a split time within ~100 units of its lane header X position;
-    # empty lanes have no data there.
+    # has a swimmer. Instead, collect ALL per-lane timing glyphs below the
+    # lane headers and assign each to its nearest lane header by X position.
+    # Lanes are ~1700 units apart; observed max X drift for longer times is
+    # ~380 units, well within the 850-unit midpoint — so nearest-lane
+    # assignment is always unambiguous.
+    #
+    # Using all rows (not just the first) handles missed first splits in
+    # 100yd+ events — the swimmer still has later splits or a finish time.
+    # Limitation: if a swimmer has zero electronic time (missed all touches),
+    # the lane cannot be detected from the file.
     lane_labels = [
         (float(x), float(y), int(re.search(r"\d+", t).group()))
         for x, y, t in glyphs if re.match(r"Lane \d+$", t)
@@ -191,19 +197,16 @@ def parse_cts_file(filepath):
 
         TIME_RE = re.compile(r"^\d+:\d{2}\.\d{2}$|^\d+\.\d{2}$")
         timing_below = [
-            (float(x), float(y)) for x, y, t in glyphs
+            float(x) for x, y, t in glyphs
             if float(y) > lane_header_y and TIME_RE.match(t)
         ]
 
         active = sorted(lane_xs.keys())  # default: all lanes active
         if timing_below:
-            first_row_y = min(y for x, y in timing_below)
-            first_row_xs = [x for x, y in timing_below if abs(y - first_row_y) < 50]
             matched = set()
-            for data_x in first_row_xs:
-                best_lane, best_lx = min(lane_xs.items(), key=lambda kv: abs(kv[1] - data_x))
-                if abs(best_lx - data_x) < 100:
-                    matched.add(best_lane)
+            for data_x in timing_below:
+                nearest_lane = min(lane_xs.keys(), key=lambda n: abs(lane_xs[n] - data_x))
+                matched.add(nearest_lane)
             if matched:
                 active = sorted(matched)
 
