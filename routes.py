@@ -46,6 +46,7 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="UTF-8">
   <title>CTS Tracker</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAABfklEQVRYhe3UP0hWcRTG8c+tKCjMMKV/Sy4SNESDFEKjRvGCUAYttUUIQtAQ1SQ0GU0GohCOQpOBtuQQmEvUFAjioAnWEPRCiiCC76/hHslFFITe5Xfgci+H332e73nO5RYpJfWsA3V1zwAZIANkgAyAQ1BMVnc7V+AbLuAdvuAVavsxT5WmPSeQcB196MFA9PZdewE4iCc4gRFs4NH/BNhUTjyNtziM/oA5G2ca4vki2nA0gLfXOZzEmZ0ALqM9XoZTcT+tjP4lvuMpPqCKB2F0D0sYxxRmsYg7ofEMy3iPn3i4ZVqklBST1Ql0Yib687gfU97EHyxsm6ARX3Ej+nO4HSDn8SJ0FnEXnwN4Ey1Yw/FUaaptJdCMI8p9X0IvjuExWnEF3egKw9+4hTfK2K+GTn+Y/4h0WsO8hvVIfCi0h/m3gsGI9Rp+xfVJ+cGN4WPEv45RTITwCFYDahUVPI9BpvE69Kdi+g10YCUGKFdQz6r7nzADZIAMkAEywF8mX1wsxgvtKAAAAABJRU5ErkJggg==">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: monospace; font-size: 12px; background: #1a1a2e; color: #e0e0e0; }
