@@ -587,6 +587,7 @@ def wipe_database():
         conn.execute("DELETE FROM meets")
         conn.execute("DELETE FROM pending_dolphin")
         conn.execute("DELETE FROM pending_cts")
+        conn.execute("DELETE FROM ingestion_log")
     log.info("Database wiped — ready for new meet")
 
 
