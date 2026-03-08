@@ -73,7 +73,7 @@ SNAPSHOT_KEEP_COUNT = 48  # 48 x 30min = 24 hours of history
 
 # Seconds to wait after a file is detected before reading it.
 # Prevents reading a file that is still being written.
-WATCHDOG_DEBOUNCE_SECONDS = 0.5
+WATCHDOG_DEBOUNCE_SECONDS = 2.0
 
 # ---------------------------------------------------------------------------
 # FLASK SERVER SETTINGS
