@@ -248,7 +248,6 @@ DASHBOARD_HTML = """
 
 <!-- Reorder View -->
 <div class="container" id="reorder-view" style="display:none">
-  <button class="reorder-save" onclick="saveReorder()">Save Order</button>
   <table>
     <thead>
       <tr>
@@ -286,6 +285,7 @@ let lastEventId = null;
 // VIEW TOGGLE
 // ---------------------------------------------------------------------------
 function setView(v) {
+  if (currentView === 'reorder' && v !== 'reorder' && reorderRows.length > 0) saveReorder();
   currentView = v;
   document.getElementById('schedule-view').style.display = v === 'schedule' ? '' : 'none';
   document.getElementById('log-view').style.display      = v === 'log'      ? '' : 'none';
