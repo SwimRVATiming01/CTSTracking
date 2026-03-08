@@ -395,14 +395,24 @@ def ingest_schedule_file(filepath, meet_id=None, session_override=None):
     Queues the file for operator approval via the dashboard modal.
     Direct import (bypassing modal) still available via meet_id parameter.
     """
+    filename = os.path.basename(filepath)
     if meet_id:
         _backup_raw_file(filepath, "schedule")
-        result = import_schedule(filepath, meet_id, session_override)
-        snapshot_db("ingest")
-        return {"status": "imported", "meet_id": meet_id, **result}
+        try:
+            result = import_schedule(filepath, meet_id, session_override)
+            snapshot_db("ingest")
+            return {"status": "imported", "meet_id": meet_id, **result}
+        except Exception as e:
+            _log_ingestion(filename, "schedule", None, None, "error", str(e))
+            raise
 
-    queue_schedule_for_approval(filepath)
-    return {"status": "pending_approval", "filename": os.path.basename(filepath)}
+    try:
+        queue_schedule_for_approval(filepath)
+        _log_ingestion(filename, "schedule", None, None, "queued")
+        return {"status": "pending_approval", "filename": filename}
+    except Exception as e:
+        _log_ingestion(filename, "schedule", None, None, "error", str(e))
+        raise
 
 
 # ===========================================================================
