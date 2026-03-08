@@ -384,10 +384,18 @@ def get_race_dashboard(meet_id, session=None):
         row["is_current_p1"] = (n is not None and row["pool"] == 1 and n == p1_max)
         row["is_current_p2"] = (n is not None and row["pool"] == 2 and n == p2_max)
 
-    # Next heat = first unrun heat in schedule order (no CTS data yet).
+    # Next heat = row immediately after the last run heat in schedule order.
+    # If no heats have run yet, fall back to the first heat in schedule order.
     # Used for the green table row highlight.
-    unrun = [r for r in rows if r.get("cts_race_num") is None]
-    next_id = min(unrun, key=lambda r: r["heat_order"])["schedule_id"] if unrun else None
+    run = [r for r in rows if r.get("cts_race_num") is not None]
+    if run:
+        last_run_order = max(r["heat_order"] for r in run)
+        ordered = sorted(rows, key=lambda r: r["heat_order"])
+        next_row = next((r for r in ordered if r["heat_order"] > last_run_order), None)
+        next_id = next_row["schedule_id"] if next_row else None
+    else:
+        ordered = sorted(rows, key=lambda r: r["heat_order"])
+        next_id = ordered[0]["schedule_id"] if ordered else None
     for row in rows:
         row["is_next_heat"] = (row["schedule_id"] == next_id)
 
