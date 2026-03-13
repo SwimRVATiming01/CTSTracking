@@ -165,8 +165,9 @@ DASHBOARD_HTML = """
       <div><b>File:</b> <span id="modal-filename">&#8212;</span></div>
     </div>
     <p>How would you like to proceed?</p>
-    <button class="modal-btn btn-scrub"   onclick="approveSchedule(true)">Scrub Race Data &amp; Import</button>
-    <button class="modal-btn btn-keep"    onclick="approveSchedule(false)">Keep Race Data &amp; Import</button>
+    <button class="modal-btn btn-scrub"   onclick="approveSchedule('scrub')">Scrub Race Data &amp; Import</button>
+    <button class="modal-btn btn-keep"    onclick="approveSchedule('keep')">Keep Race Data &amp; Import</button>
+    <button class="modal-btn btn-add"     onclick="approveSchedule('append')">Append to Schedule</button>
     <button class="modal-btn btn-dismiss" onclick="dismissSchedule()">Dismiss</button>
   </div>
 </div>
@@ -239,7 +240,6 @@ DASHBOARD_HTML = """
         <th>CTS #</th>
         <th>Dolphin #</th>
         <th>Actual Start</th>
-        <th>Missing Lanes</th>
         <th>Finish</th>
       </tr>
     </thead>
@@ -318,11 +318,14 @@ function checkPendingSchedule() {
     });
 }
 
-function approveSchedule(scrub) {
+function approveSchedule(mode) {
+  const body = mode === 'append' ? {append: true}
+             : mode === 'keep'   ? {scrub_races: false}
+             :                     {scrub_races: true};
   fetch('/api/schedule/approve', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({scrub_races: scrub})
+    body: JSON.stringify(body)
   }).then(() => {
     document.getElementById('modal-overlay').classList.remove('show');
     loadDashboard();
@@ -496,7 +499,6 @@ function renderRow(row) {
     ctsCell +
     dolCell +
     '<td>' + (row.cts_start_time || '\u2014') + '</td>' +
-    '<td>' + (row.missing_lanes || '\u2014') + '</td>' +
     '<td>' + finish + '</td>' +
     '</tr>';
 }
@@ -900,8 +902,9 @@ def api_pending_schedule():
 @app.route("/api/schedule/approve", methods=["POST"])
 def api_approve_schedule():
     data = request.json or {}
+    append = data.get("append", False)
     scrub = data.get("scrub_races", True)
-    result = approve_schedule(scrub_races=scrub)
+    result = approve_schedule(scrub_races=scrub, append=append)
     return jsonify(result)
 
 

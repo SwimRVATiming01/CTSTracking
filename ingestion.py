@@ -71,7 +71,7 @@ def _parse_heat_col(heat_col):
     return result
 
 
-def import_schedule(filepath, meet_id, session_override=None):
+def import_schedule(filepath, meet_id, session_override=None, append=False):
     """
     Parse a Meet Manager 8.0 heat sheet CSV and load it into the schedule table.
     Re-import safe — existing manual overrides are always preserved.
@@ -147,7 +147,16 @@ def import_schedule(filepath, meet_id, session_override=None):
     ordered = sorted(heats.items(), key=sort_key)
 
     with get_write_conn() as conn:
-        for order, (key, h) in enumerate(ordered, start=1):
+        # In append mode, new entries are placed after the current highest heat_order
+        if append:
+            row = conn.execute(
+                "SELECT MAX(heat_order) FROM schedule WHERE meet_id=?", (meet_id,)
+            ).fetchone()
+            next_order = (row[0] or 0) + 1
+        else:
+            next_order = 1
+
+        for order, (key, h) in enumerate(ordered, start=next_order):
             session, event_id, heat_num = key
             existing = conn.execute(
                 "SELECT id, override_start FROM schedule WHERE meet_id=? AND session=? AND event_id=? AND heat=?",
@@ -164,13 +173,23 @@ def import_schedule(filepath, meet_id, session_override=None):
                 )
                 stats["inserted"] += 1
             else:
-                conn.execute(
-                    """UPDATE schedule SET event_name=?,heat_label=?,heat_type=?,
-                       projected_start=?,heat_order=?,imported_at=datetime('now')
-                       WHERE id=?""",
-                    (h["event_name"], h["heat_label"], h["heat_type"],
-                     h["start_time"], order, existing["id"])
-                )
+                # In append mode, preserve existing heat_order — don't resequence
+                if append:
+                    conn.execute(
+                        """UPDATE schedule SET event_name=?,heat_label=?,heat_type=?,
+                           projected_start=?,imported_at=datetime('now')
+                           WHERE id=?""",
+                        (h["event_name"], h["heat_label"], h["heat_type"],
+                         h["start_time"], existing["id"])
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE schedule SET event_name=?,heat_label=?,heat_type=?,
+                           projected_start=?,heat_order=?,imported_at=datetime('now')
+                           WHERE id=?""",
+                        (h["event_name"], h["heat_label"], h["heat_type"],
+                         h["start_time"], order, existing["id"])
+                    )
                 if existing["override_start"]:
                     stats["skipped"] += 1
                 else:
@@ -344,12 +363,13 @@ def dismiss_pending_schedule():
         _pending_schedule.clear()
 
 
-def approve_schedule(scrub_races=True):
+def approve_schedule(scrub_races=True, append=False):
     """
     Called when operator approves a pending schedule via the dashboard.
 
     scrub_races=True  -> Full wipe then import (new meet, clean slate)
     scrub_races=False -> Keep race data, wipe and reimport schedule only
+    append=True       -> Keep races and existing schedule, append new entries only
     """
     with _pending_schedule_lock:
         if not _pending_schedule:
@@ -357,6 +377,20 @@ def approve_schedule(scrub_races=True):
         pending = dict(_pending_schedule)
 
     filepath  = pending["filepath"]
+
+    # Append mode: keep everything, just add new entries to the existing active meet
+    if append:
+        active = get_active_meet()
+        if not active:
+            return {"status": "error", "message": "No active meet to append to"}
+        _backup_raw_file(filepath, "schedule")
+        result = import_schedule(filepath, active["meet_id"], append=True)
+        with _pending_schedule_lock:
+            _pending_schedule.clear()
+        snapshot_db("ingest")
+        log.info(f"Schedule appended: meet={active['meet_id']}")
+        return {"status": "appended", "meet_id": active["meet_id"], **result}
+
     meet_name = pending["meet_name"] or "Unknown Meet"
     meet_date = pending["meet_date"]
     meet_id   = meet_date or datetime.now().strftime("%Y-%m-%d")

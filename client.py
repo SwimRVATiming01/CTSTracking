@@ -1,13 +1,13 @@
 """
 client.py - CTS Tracker Client
 ================================
-Runs on CTS and Dolphin machines.
-Monitors the local timing software output folder, captures file metadata,
+Runs on any timing machine (CTS, Dolphin, or both).
+Monitors local timing software output folders, captures file metadata,
 and forwards files to the server's network watch folder.
 
 Setup:
-  1. Set MACHINE_TYPE below ("cts" or "dolphin")
-  2. Run:  python client.py
+  No configuration required — watches both CTS and Dolphin folders automatically.
+  Run:  python client.py
 
 Requirements:
     pip install watchdog
@@ -26,38 +26,22 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 # ===========================================================================
-# CONFIGURATION — only one thing to set per machine
+# CONFIGURATION
 # ===========================================================================
-
-# *** Set this to "cts" or "dolphin" ***
-MACHINE_TYPE = "dolphin"
-
-# ---------------------------------------------------------------------------
-# Everything below is automatic — no need to edit
-# ---------------------------------------------------------------------------
 
 # Machine ID pulled from Windows computer name
 MACHINE_ID = platform.node().replace(" ", "_") or "UNKNOWN"
 
-# Watch folder and file extension determined by machine type
-if MACHINE_TYPE == "cts":
-    # CTS software saves to Documents\CTS
-    # AHK script already names files: YYYY-MM-DD_HH-MM-SS.oxps
-    WATCH_FOLDER = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Documents", "CTS")
-    WATCHED_EXTENSION = ".oxps"
-elif MACHINE_TYPE == "dolphin":
-    # Dolphin software always saves to C:\CTSDolphin
-    WATCH_FOLDER = r"C:\CTSDolphin"
-    WATCHED_EXTENSION = ".do3"
-else:
-    print(f"ERROR: MACHINE_TYPE must be 'cts' or 'dolphin', got: {repr(MACHINE_TYPE)}")
-    sys.exit(1)
+# CTS software saves .oxps files here (named by AHK: YYYY-MM-DD_HH-MM-SS.oxps)
+CTS_WATCH_FOLDER = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Documents", "CTS")
+
+# Dolphin software always saves .do3 files here
+DOLPHIN_WATCH_FOLDER = r"C:\CTSDolphin"
 
 # Network path to server watch folder — same on every client machine
 SERVER_WATCH_FOLDER = r"\\CSAC-001\swmeets8\racenumbers"
 
-# Seconds to wait after detection before forwarding
-# Prevents reading a file still being written
+# Seconds to wait after detection before checking file readiness
 DEBOUNCE_SECONDS = 0.75
 
 # Retry logic if network share is temporarily unavailable
@@ -100,22 +84,53 @@ def build_dest_filename(original_filename, machine_id, ctime=None):
     """
     Build the forwarded filename with machine ID embedded.
 
-    CTS:     YYYY-MM-DD_HH-MM-SS.oxps    -> YYYY-MM-DD_HH-MM-SS__MACHINEID.oxps
-             (timestamp already in name from AHK, just append machine ID)
+    CTS (.oxps):    YYYY-MM-DD_HH-MM-SS.oxps  -> YYYY-MM-DD_HH-MM-SS__MACHINEID.oxps
+                    (timestamp already in name from AHK, just append machine ID)
 
-    Dolphin: 039-000-00F0073.do3         -> 039-000-00F0073__MACHINEID__YYYYMMDDTHHMMSS.do3
-             (no timestamp in name, embed ctime)
+    Dolphin (.do3): 039-000-00F0073.do3        -> 039-000-00F0073__MACHINEID__YYYYMMDDTHHMMSS.do3
+                    (no timestamp in name, embed ctime)
     """
     stem, ext = os.path.splitext(original_filename)
 
-    if MACHINE_TYPE == "cts":
-        # Timestamp already in filename from AHK — just append machine ID
+    if ext.lower() == ".oxps":
         return f"{stem}__{machine_id}{ext}"
-
-    else:  # dolphin
-        # Embed machine ID and ctime
+    else:  # .do3
         timestamp = (ctime or datetime.now()).strftime("%Y%m%dT%H%M%S")
         return f"{stem}__{machine_id}__{timestamp}{ext}"
+
+
+def wait_for_file_ready(filepath, stable_seconds=0.5, timeout=30, poll_interval=0.25):
+    """
+    Wait until a file is non-empty and its size stops changing.
+    Returns True when ready, False if it times out.
+    """
+    deadline = time.time() + timeout
+    last_size = -1
+    stable_since = None
+
+    while time.time() < deadline:
+        try:
+            size = os.path.getsize(filepath)
+        except OSError:
+            time.sleep(poll_interval)
+            continue
+
+        if size == 0:
+            last_size = 0
+            stable_since = None
+            time.sleep(poll_interval)
+            continue
+
+        if size != last_size:
+            last_size = size
+            stable_since = time.time()
+        elif stable_since is not None and (time.time() - stable_since) >= stable_seconds:
+            return True
+
+        time.sleep(poll_interval)
+
+    log.warning(f"Timed out waiting for file to be ready: {os.path.basename(filepath)} (last size={last_size})")
+    return False
 
 
 def copy_to_server(src_path, dest_filename):
@@ -146,9 +161,12 @@ def copy_to_server(src_path, dest_filename):
 # WATCHDOG
 # ===========================================================================
 
+WATCHED_EXTENSIONS = {".oxps", ".do3"}
+
+
 class ForwardHandler(FileSystemEventHandler):
     """
-    Detects new files in the local watch folder.
+    Detects new .oxps and .do3 files in watched folders.
     Captures ctime immediately on detection, debounces, then forwards.
     """
 
@@ -173,11 +191,10 @@ class ForwardHandler(FileSystemEventHandler):
         threading.Thread(target=loop, daemon=True).start()
 
     def _should_handle(self, filepath):
-        return os.path.splitext(filepath)[1].lower() == WATCHED_EXTENSION.lower()
+        return os.path.splitext(filepath)[1].lower() in WATCHED_EXTENSIONS
 
     def on_created(self, event):
         if not event.is_directory and self._should_handle(event.src_path):
-            # Capture ctime IMMEDIATELY before debounce delay
             ctime = get_file_ctime(event.src_path)
             log.debug(f"Detected: {os.path.basename(event.src_path)} (ctime={ctime})")
             with self._lock:
@@ -195,31 +212,37 @@ class ForwardHandler(FileSystemEventHandler):
             log.warning(f"File gone before processing: {filepath}")
             return
         filename = os.path.basename(filepath)
+        if not wait_for_file_ready(filepath):
+            log.error(f"Skipping {filename}: file never became ready (still empty or changing)")
+            return
         dest_filename = build_dest_filename(filename, MACHINE_ID, ctime)
         log.info(f"Processing: {filename} -> {dest_filename}")
         copy_to_server(filepath, dest_filename)
 
 
 # ===========================================================================
-# STARTUP CHECKS
+# FOLDER WATCHING WITH RETRY
 # ===========================================================================
 
-def check_config():
-    errors = []
+def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10):
+    """
+    Try to add a folder to the watchdog observer.
+    If the folder doesn't exist yet, keep retrying in the background.
+    """
+    def attempt():
+        while True:
+            if os.path.isdir(path):
+                try:
+                    observer.schedule(handler, path, recursive=False)
+                    log.info(f"Watching {label}: {path}")
+                    return
+                except Exception as e:
+                    log.warning(f"Could not watch {label}: {e} — retrying in {retry_interval}s")
+            else:
+                log.warning(f"{label} not found: {path} — retrying in {retry_interval}s")
+            time.sleep(retry_interval)
 
-    if not os.path.isdir(WATCH_FOLDER):
-        errors.append(f"Local watch folder does not exist: {WATCH_FOLDER}")
-
-    if errors:
-        for e in errors:
-            log.error(f"Config error: {e}")
-        sys.exit(1)
-
-    if not os.path.isdir(SERVER_WATCH_FOLDER):
-        log.warning(
-            f"Server watch folder not currently accessible: {SERVER_WATCH_FOLDER} — "
-            f"client will start anyway and retry when files arrive."
-        )
+    threading.Thread(target=attempt, daemon=True).start()
 
 
 # ===========================================================================
@@ -229,19 +252,26 @@ def check_config():
 if __name__ == "__main__":
     log.info("=" * 50)
     log.info("CTS Tracker Client starting")
-    log.info(f"  Machine type: {MACHINE_TYPE.upper()}")
-    log.info(f"  Machine ID:   {MACHINE_ID}  (from computer name)")
-    log.info(f"  Watching:     {WATCH_FOLDER}")
-    log.info(f"  Extension:    {WATCHED_EXTENSION}")
-    log.info(f"  Forwarding:   {SERVER_WATCH_FOLDER}")
+    log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
+    log.info(f"  CTS folder:  {CTS_WATCH_FOLDER}")
+    log.info(f"  Dolphin folder: {DOLPHIN_WATCH_FOLDER}")
+    log.info(f"  Forwarding:  {SERVER_WATCH_FOLDER}")
     log.info("=" * 50)
 
-    check_config()
+    if not os.path.isdir(SERVER_WATCH_FOLDER):
+        log.warning(
+            f"Server watch folder not currently accessible: {SERVER_WATCH_FOLDER} — "
+            f"client will start anyway and retry when files arrive."
+        )
 
     handler = ForwardHandler()
     observer = Observer()
-    observer.schedule(handler, WATCH_FOLDER, recursive=False)
+    observer.daemon = True
     observer.start()
+
+    _watch_folder_with_retry(observer, handler, CTS_WATCH_FOLDER, "CTS")
+    _watch_folder_with_retry(observer, handler, DOLPHIN_WATCH_FOLDER, "Dolphin")
+
     log.info("Watching for files... (Ctrl+C to stop)")
 
     try:

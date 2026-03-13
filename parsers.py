@@ -6,6 +6,7 @@ parsers.py - File parsers for CTS (.oxps) and Dolphin (.do3) files,
 import logging
 import os
 import re
+import time
 import zipfile
 from datetime import datetime
 
@@ -107,11 +108,25 @@ def parse_cts_file(filepath):
 
     Returns dict on success, None on unrecoverable error.
     """
-    try:
-        with zipfile.ZipFile(filepath, 'r') as z:
-            content = z.read('Documents/1/Pages/1.fpage').decode('utf-8', errors='replace')
-    except Exception as e:
-        log.error(f"Could not open .oxps file {filepath}: {e}")
+    content = None
+    _retries = 3
+    _delay = 1.5
+    for _attempt in range(1, _retries + 2):
+        try:
+            with zipfile.ZipFile(filepath, 'r') as z:
+                content = z.read('Documents/1/Pages/1.fpage').decode('utf-8', errors='replace')
+            break
+        except zipfile.BadZipFile as e:
+            if _attempt <= _retries:
+                log.warning(f"Could not open .oxps file {filepath} (attempt {_attempt}/{_retries}): {e} — retrying in {_delay}s")
+                time.sleep(_delay)
+            else:
+                log.error(f"Could not open .oxps file {filepath}: {e}")
+                return None
+        except Exception as e:
+            log.error(f"Could not open .oxps file {filepath}: {e}")
+            return None
+    if content is None:
         return None
 
     # Extract all Glyphs with X, Y, and text
