@@ -13,6 +13,7 @@ Requirements:
     pip install watchdog
 """
 
+import ctypes
 import logging
 import os
 import platform
@@ -67,6 +68,18 @@ log = logging.getLogger("client")
 # ===========================================================================
 # HELPERS
 # ===========================================================================
+
+def warn_popup(message):
+    """Show a non-blocking Windows warning dialog in a background thread."""
+    def _show():
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            message,
+            "CTS Tracker Client — Warning",
+            0x30,  # MB_ICONWARNING | MB_OK
+        )
+    threading.Thread(target=_show, daemon=True).start()
+
 
 def get_file_ctime(filepath):
     """
@@ -154,6 +167,12 @@ def copy_to_server(src_path, dest_filename):
                 time.sleep(RETRY_DELAY_SECONDS)
             else:
                 log.error(f"Failed to forward {dest_filename} after {RETRY_ATTEMPTS} attempts: {e}")
+                warn_popup(
+                    f"Failed to send file to server after {RETRY_ATTEMPTS} attempts:\n\n"
+                    f"  {dest_filename}\n\n"
+                    f"Server folder: {SERVER_WATCH_FOLDER}\n\n"
+                    f"Check your network connection. The file was NOT forwarded."
+                )
                 return False
 
 
@@ -259,10 +278,14 @@ if __name__ == "__main__":
     log.info("=" * 50)
 
     if not os.path.isdir(SERVER_WATCH_FOLDER):
-        log.warning(
-            f"Server watch folder not currently accessible: {SERVER_WATCH_FOLDER} — "
-            f"client will start anyway and retry when files arrive."
+        msg = (
+            f"Cannot reach the server folder:\n\n"
+            f"  {SERVER_WATCH_FOLDER}\n\n"
+            f"Check that you are connected to the network and the server is online.\n\n"
+            f"The client will start anyway and retry automatically when files arrive."
         )
+        log.warning(f"Server watch folder not accessible: {SERVER_WATCH_FOLDER}")
+        warn_popup(msg)
 
     handler = ForwardHandler()
     observer = Observer()

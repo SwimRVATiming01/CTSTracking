@@ -101,10 +101,11 @@ DASHBOARD_HTML = """
     /* Pool highlights */
     tr.current-p1 td { background: #00c800 !important; color: #0d1117 !important; }
     tr.current-p2 td { background: #00b4ff !important; color: #0d1117 !important; }
+    tr.heat-one td { background: #2b2b4d; color: #ffffff; }
 
-    /* Lane cells */
-    .lane-active  { background: #1a4a1a; color: #1a4a1a; font-weight: bold; border-radius: 3px; }
-    .lane-empty   { background: #4a1a1a; color: #ff6b6b; border-radius: 3px; }
+    /* Lane cells — !important so they win over row highlight backgrounds */
+    .lane-active  { background: #1a4a1a !important; color: #1a4a1a !important; font-weight: bold; border-radius: 3px; }
+    .lane-empty   { background: #4a1a1a !important; color: #ff6b6b !important; border-radius: 3px; }
     .lane-unknown { color: #333; }
 
     /* Gap flag */
@@ -442,11 +443,12 @@ function loadDashboard() {
 function renderRow(row) {
   const hasRace = row.cts_race_num !== null && row.cts_race_num !== undefined;
 
-  // Row class
+  // Row class — pool current-heat highlights take priority over heat-one
   let cls = '';
-  if      (row.is_next_heat)    cls = 'current-p1';
-  else if (row.is_next_heat_p2) cls = 'current-p2';
-  else if (!hasRace)            cls = 'unmatched';
+  if      (row.is_next_heat)             cls = 'current-p1';
+  else if (row.is_next_heat_p2)          cls = 'current-p2';
+  else if (String(row.heat) === '1')     cls = 'heat-one';
+  else if (!hasRace)                     cls = 'unmatched';
 
   // Event — hide duplicate
   const showEv = row.event_id !== lastEventId;
