@@ -65,7 +65,7 @@ DASHBOARD_HTML = """
     /* NAV */
     nav { background: #16213e; padding: 5px 14px; display: flex; gap: 6px;
           border-bottom: 1px solid #0f3460; align-items: center; }
-    #eta-bar { font-size: 11px; color: #6bff6b; display: none; }
+    #eta-bar { font-size: 11px; display: none; }
     #eta-bar.show { display: inline; }
     .view-btn { border: none; padding: 3px 9px; border-radius: 4px; cursor: pointer;
                 font-family: monospace; font-size: 11px; margin-left: auto; }
@@ -250,6 +250,9 @@ DASHBOARD_HTML = """
 
 <!-- Reorder View -->
 <div class="container" id="reorder-view" style="display:none">
+  <div style="padding:8px 14px 4px; display:flex; gap:8px;">
+    <button class="reorder-save" style="margin:0;" onclick="sortByEventHeat()">&#8597; Sort by Event &rarr; Heat</button>
+  </div>
   <table>
     <thead>
       <tr>
@@ -413,6 +416,7 @@ function loadDashboard() {
         const sign = eta.avg_delta > 0 ? '+' : '';
         etaBar.textContent =
           'Final Heat Start: ' + eta.time + '  (' + sign + eta.avg_delta + ' min)';
+        etaBar.style.color = eta.avg_delta > 0 ? '#ff6b6b' : eta.avg_delta < 0 ? '#6bff6b' : '#ffffff';
         etaBar.classList.add('show');
       } else {
         etaBar.classList.remove('show');
@@ -631,6 +635,19 @@ function saveReorder() {
   })
   .then(r => r.json())
   .then(() => loadReorderView());
+}
+
+function sortByEventHeat() {
+  reorderRows.sort((a, b) => {
+    const evA = parseFloat(a.event_id) || 0;
+    const evB = parseFloat(b.event_id) || 0;
+    if (evA !== evB) return evA - evB;
+    const hA = parseFloat(a.heat) || 0;
+    const hB = parseFloat(b.heat) || 0;
+    return hA - hB;
+  });
+  renderReorderTable();
+  saveReorder();
 }
 
 // ---------------------------------------------------------------------------
