@@ -123,6 +123,15 @@ DASHBOARD_HTML = """
     .badge-yellow { background:#4a4a00; color:#ffd700; }
     .badge-gray   { background:#2a2a2a; color:#888; }
 
+    /* History view */
+    #btn-history { background: #0f3460; color: #a0c4ff; }
+    #btn-history.active { background: #a0c4ff; color: #0d1117; }
+    .history-toolbar { padding: 8px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .history-select { background: #0f3460; border: 1px solid #1e2a4a; color: #e0e0e0;
+                      font-family: monospace; font-size: 12px; padding: 4px 8px;
+                      border-radius: 4px; min-width: 220px; }
+    .history-select:focus { outline: 1px solid #a0c4ff; }
+
 
     /* Modal */
     .modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%;
@@ -222,6 +231,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-schedule" onclick="setView('schedule')">Schedule</button>
     <button class="view-btn" id="btn-log"      onclick="setView('log')">Full Log</button>
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
+    <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
@@ -268,6 +278,35 @@ DASHBOARD_HTML = """
   </table>
 </div>
 
+<!-- History View -->
+<div class="container" id="history-view" style="display:none">
+  <div class="history-toolbar">
+    <select id="history-meet-select" class="history-select" onchange="loadHistoryDashboard(this.value)">
+      <option value="">-- Select a past meet --</option>
+    </select>
+    <button class="reorder-save" style="margin:0;" id="btn-export-csv"
+            onclick="exportHistoryCSV()" disabled>Export CSV</button>
+    <span id="history-meet-info" style="color:#888;font-size:11px;"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th class="left">Event</th>
+        <th>Heat</th>
+        <th>Projected</th>
+        <th>Late(+)<br>Early(-)</th>
+        <th>1</th><th>2</th><th>3</th><th>4</th>
+        <th>5</th><th>6</th><th>7</th><th>8</th>
+        <th>CTS #</th>
+        <th>Dolphin #</th>
+        <th>Actual Start</th>
+        <th>Finish</th>
+      </tr>
+    </thead>
+    <tbody id="history-table"></tbody>
+  </table>
+</div>
+
 <!-- Full Log View -->
 <div class="container" id="log-view" style="display:none">
   <table>
@@ -295,11 +334,14 @@ function setView(v) {
   document.getElementById('schedule-view').style.display = v === 'schedule' ? '' : 'none';
   document.getElementById('log-view').style.display      = v === 'log'      ? '' : 'none';
   document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
+  document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
+  document.getElementById('btn-history').classList.toggle('active', v === 'history');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
+  if (v === 'history') loadHistoryMeets();
 }
 setView('schedule');  // set initial active state
 
@@ -651,12 +693,109 @@ function sortByEventHeat() {
 }
 
 // ---------------------------------------------------------------------------
+// HISTORY
+// ---------------------------------------------------------------------------
+let historyMeetId = null;
+
+function loadHistoryMeets() {
+  fetch('/api/meets')
+    .then(r => r.json())
+    .then(meets => {
+      const sel = document.getElementById('history-meet-select');
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">-- Select a past meet --</option>';
+      meets.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.meet_id;
+        opt.textContent = m.meet_name +
+          (m.meet_date ? ' \u2014 ' + m.meet_date : '') +
+          (m.active ? ' [active]' : '');
+        sel.appendChild(opt);
+      });
+      if (prev) { sel.value = prev; loadHistoryDashboard(prev); }
+    });
+}
+
+function loadHistoryDashboard(meetId) {
+  if (!meetId) {
+    document.getElementById('history-table').innerHTML = '';
+    document.getElementById('history-meet-info').textContent = '';
+    document.getElementById('btn-export-csv').disabled = true;
+    historyMeetId = null;
+    return;
+  }
+  historyMeetId = meetId;
+  fetch('/api/history/' + encodeURIComponent(meetId) + '/dashboard')
+    .then(r => r.json())
+    .then(data => {
+      const meet = data.meet || {};
+      document.getElementById('history-meet-info').textContent =
+        [meet.location, meet.meet_date].filter(Boolean).join(' \u2014 ');
+      document.getElementById('btn-export-csv').disabled = false;
+      let lastEv = null;
+      document.getElementById('history-table').innerHTML =
+        (data.rows || []).map(row => {
+          const hasRace = row.cts_race_num !== null && row.cts_race_num !== undefined;
+          let cls = String(row.heat) === '1' ? 'heat-one' : (!hasRace ? 'unmatched' : '');
+          const showEv = row.event_id !== lastEv;
+          lastEv = row.event_id;
+          let delta = '\u2014';
+          if (row.delta_minutes !== null && row.delta_minutes !== undefined) {
+            const rounded = Math.round(row.delta_minutes);
+            const dc = rounded > 0 ? 'late' : rounded < 0 ? 'early' : 'ontime';
+            delta = '<span class="' + dc + '">' + (rounded > 0 ? '+' : '') + rounded + '</span>';
+          }
+          const active = (hasRace && row.active_lanes)
+            ? row.active_lanes.split(',').map(Number) : null;
+          const lanes = [1,2,3,4,5,6,7,8].map(n => {
+            if (active === null) return '<td class="lane-unknown">\u2014</td>';
+            return active.includes(n)
+              ? '<td class="lane-active">' + n + '</td>'
+              : '<td class="lane-empty">' + n + '</td>';
+          }).join('');
+          const ctsCell = '<td' + (row.cts_gap_flag ? ' class="gap-flag"' : '') + '>' +
+            (hasRace ? row.cts_race_num : '\u2014') + '</td>';
+          const dolCell = '<td' + (row.dolphin_gap_flag ? ' class="gap-flag"' : '') + '>' +
+            (row.dolphin_race_num ?? '\u2014') + '</td>';
+          const finish = row.cts_file_time
+            ? (row.cts_file_time.length >= 19 ? row.cts_file_time.substring(11,19) : row.cts_file_time)
+            : '\u2014';
+          return '<tr class="' + cls + '">' +
+            '<td class="left">' + (showEv ? row.event_id : '') + '</td>' +
+            '<td>' + row.heat + '</td>' +
+            '<td>' + (row.effective_start || '\u2014') + '</td>' +
+            '<td>' + delta + '</td>' +
+            lanes + ctsCell + dolCell +
+            '<td>' + (row.cts_start_time || '\u2014') + '</td>' +
+            '<td>' + finish + '</td>' +
+            '</tr>';
+        }).join('');
+    });
+}
+
+function exportHistoryCSV() {
+  if (!historyMeetId) return;
+  const btn = document.getElementById('btn-export-csv');
+  btn.textContent = 'Exporting...';
+  btn.disabled = true;
+  fetch('/api/history/' + encodeURIComponent(historyMeetId) + '/export', {method:'POST'})
+    .then(r => r.json())
+    .then(data => {
+      btn.textContent = 'Export CSV';
+      btn.disabled = false;
+      alert('Exported to:\n' + (data.exported || 'unknown path'));
+    })
+    .catch(() => { btn.textContent = 'Export CSV'; btn.disabled = false; });
+}
+
+// ---------------------------------------------------------------------------
 // POLL
 // ---------------------------------------------------------------------------
 function poll() {
   checkPendingSchedule();
   if (currentView === 'schedule') loadDashboard();
-  else loadFullLog();
+  else if (currentView === 'log') loadFullLog();
+  // history view is not auto-refreshed — it's read-only static data
 }
 
 function updateHeaderHeight() {
@@ -1038,4 +1177,26 @@ def api_export_race_log():
     if not meet:
         abort(400, "No active meet")
     path = export_race_log_csv(meet["meet_id"])
+    return jsonify({"exported": path})
+
+
+# ---------------------------------------------------------------------------
+# HISTORY ROUTES (read-only, any meet_id)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/history/<meet_id>/dashboard")
+def api_history_dashboard(meet_id):
+    all_meets = {m["meet_id"]: m for m in get_all_meets()}
+    if meet_id not in all_meets:
+        abort(404, "Meet not found")
+    rows = get_race_dashboard(meet_id)
+    return jsonify({"meet": all_meets[meet_id], "rows": rows})
+
+
+@app.route("/api/history/<meet_id>/export", methods=["POST"])
+def api_history_export(meet_id):
+    all_meets = {m["meet_id"]: m for m in get_all_meets()}
+    if meet_id not in all_meets:
+        abort(404, "Meet not found")
+    path = export_race_log_csv(meet_id)
     return jsonify({"exported": path})
