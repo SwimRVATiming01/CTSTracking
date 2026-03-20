@@ -723,7 +723,7 @@ function loadSnapshots() {
         const opt = document.createElement('option');
         opt.value = s.snapshot_file;
         const kb  = s.size_bytes ? ' (' + Math.round(s.size_bytes / 1024) + ' KB)' : '';
-        opt.textContent = s.trigger + '  \u2014  ' + s.created_at.substring(0, 16) + kb;
+        opt.textContent = s.trigger + '  \u2014  ' + s.local_time + kb;
         sel.appendChild(opt);
       });
       if (prev) { sel.value = prev; onSnapshotChange(prev); }
@@ -1257,6 +1257,14 @@ def api_snapshots():
         path = os.path.join(config.SNAPSHOT_DIR, s["snapshot_file"])
         s["exists"]     = os.path.isfile(path)
         s["size_bytes"] = os.path.getsize(path) if s["exists"] else None
+        # created_at is UTC — derive local time from the filename instead
+        # filename format: cts_tracker_YYYY-MM-DD_HH-MM-SS.db
+        try:
+            ts = s["snapshot_file"].replace("cts_tracker_", "").replace(".db", "")
+            date_part, time_part = ts.split("_", 1)
+            s["local_time"] = date_part + " " + time_part.replace("-", ":")
+        except Exception:
+            s["local_time"] = s["created_at"]
     return jsonify(snaps)
 
 
