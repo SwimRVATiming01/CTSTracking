@@ -790,7 +790,7 @@ function exportHistoryCSV() {
     .then(data => {
       btn.textContent = 'Export CSV';
       btn.disabled = false;
-      alert('Exported to:\n' + (data.exported || 'unknown path'));
+      alert('Exported to: ' + (data.exported || 'unknown path'));
     })
     .catch(() => { btn.textContent = 'Export CSV'; btn.disabled = false; });
 }
