@@ -588,14 +588,21 @@ function loadFullLog() {
 // ---------------------------------------------------------------------------
 function restartServer() {
   if (!confirm('Restart the server?')) return;
-  document.getElementById('btn-restart').textContent = 'Restarting...';
-  fetch('/admin/restart', {method: 'POST'})
-    .then(() => {
-      setTimeout(() => { location.reload(); }, 3000);
-    })
-    .catch(() => {
-      setTimeout(() => { location.reload(); }, 3000);
+  const btn = document.getElementById('btn-restart');
+  btn.textContent = 'Restarting...';
+  btn.disabled = true;
+  fetch('/admin/restart', {method: 'POST'}).catch(() => {});
+  // Poll /health until the server responds again, then reload
+  let attempts = 0;
+  function waitForServer() {
+    fetch('/health').then(r => {
+      if (r.ok) { location.reload(); }
+      else { if (++attempts < 30) setTimeout(waitForServer, 1000); else location.reload(); }
+    }).catch(() => {
+      if (++attempts < 30) setTimeout(waitForServer, 1000); else location.reload();
     });
+  }
+  setTimeout(waitForServer, 2000); // give the old process 2s to exit first
 }
 
 // ---------------------------------------------------------------------------
@@ -805,7 +812,15 @@ function updateHeaderHeight() {
 updateHeaderHeight();
 window.addEventListener('resize', updateHeaderHeight);
 
-loadDashboard().then(() => updateHeaderHeight()).catch(() => updateHeaderHeight());
+function initialLoad(attempt) {
+  loadDashboard()
+    .then(() => updateHeaderHeight())
+    .catch(() => {
+      updateHeaderHeight();
+      if ((attempt || 0) < 15) setTimeout(() => initialLoad((attempt || 0) + 1), 1000);
+    });
+}
+initialLoad();
 checkPendingSchedule();
 setInterval(poll, {{ poll_interval }});
 </script>
