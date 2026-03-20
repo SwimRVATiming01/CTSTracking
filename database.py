@@ -184,9 +184,26 @@ def get_active_meet():
     return dict(row) if row else None
 
 
-def get_all_meets():
+def get_all_meets(db_path=None):
+    if db_path:
+        conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute("SELECT * FROM meets ORDER BY created_at DESC").fetchall()
+        finally:
+            conn.close()
+    else:
+        with get_conn() as conn:
+            rows = conn.execute("SELECT * FROM meets ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_snapshots():
+    """Return all snapshot records from the live DB's snapshots table."""
     with get_conn() as conn:
-        rows = conn.execute("SELECT * FROM meets ORDER BY created_at DESC").fetchall()
+        rows = conn.execute(
+            "SELECT id, snapshot_file, trigger, created_at FROM snapshots ORDER BY created_at DESC"
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -294,7 +311,7 @@ def add_manual_heat(meet_id, session, event_id, event_name, heat,
 POOL2_THRESHOLD = 2000
 
 
-def get_race_dashboard(meet_id, session=None):
+def get_race_dashboard(meet_id, session=None, db_path=None):
     """
     Main dashboard query. Schedule rows joined with race_log data.
 
@@ -359,8 +376,16 @@ def get_race_dashboard(meet_id, session=None):
         params.append(session)
     query += " ORDER BY s.heat_order ASC"
 
-    with get_conn() as conn:
-        rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+    if db_path:
+        conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+        finally:
+            conn.close()
+    else:
+        with get_conn() as conn:
+            rows = [dict(r) for r in conn.execute(query, params).fetchall()]
 
     if not rows:
         return rows
@@ -438,15 +463,13 @@ def get_race_dashboard(meet_id, session=None):
     return rows
 
 
-def get_full_log(meet_id):
+def get_full_log(meet_id, db_path=None):
     """
     Return every ingested file in chronological order.
     Joins ingestion_log with race_log for event/heat/race# context where available.
     One row per file regardless of match status.
     """
-    with get_conn() as conn:
-        rows = conn.execute(
-            """SELECT
+    sql = """SELECT
                    i.ingested_at,
                    i.file_type,
                    i.filename,
@@ -466,9 +489,17 @@ def get_full_log(meet_id):
                        (i.file_type = 'cts'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
                     OR (i.file_type = 'dolphin' AND r.dolphin_filename = i.filename AND r.meet_id = ?)
                    )
-               ORDER BY i.ingested_at ASC""",
-            (meet_id, meet_id)
-        ).fetchall()
+               ORDER BY i.ingested_at ASC"""
+    if db_path:
+        conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(sql, (meet_id, meet_id)).fetchall()
+        finally:
+            conn.close()
+    else:
+        with get_conn() as conn:
+            rows = conn.execute(sql, (meet_id, meet_id)).fetchall()
     return [dict(r) for r in rows]
 
 

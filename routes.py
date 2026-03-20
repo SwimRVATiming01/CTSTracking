@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, render_template_string, request, abort
 
 import config
+import csv
+
 from database import (
     get_active_meet, get_all_meets, create_meet, set_active_meet,
     get_schedule, get_sessions, override_start_time, clear_override,
@@ -20,7 +22,7 @@ from database import (
     get_race_dashboard, get_full_log, get_current_heat_state,
     add_manual_race_entry, update_race_entry,
     get_pending_summary, get_ingestion_log,
-    export_race_log_csv, snapshot_db,
+    export_race_log_csv, snapshot_db, get_snapshots,
 )
 from ingestion import (
     get_pending_schedule, approve_schedule, dismiss_pending_schedule,
@@ -281,8 +283,12 @@ DASHBOARD_HTML = """
 <!-- History View -->
 <div class="container" id="history-view" style="display:none">
   <div class="history-toolbar">
-    <select id="history-meet-select" class="history-select" onchange="loadHistoryDashboard(this.value)">
-      <option value="">-- Select a past meet --</option>
+    <select id="history-snapshot-select" class="history-select" style="min-width:280px"
+            onchange="onSnapshotChange(this.value)">
+      <option value="">-- Select a snapshot --</option>
+    </select>
+    <select id="history-meet-select" class="history-select" onchange="loadHistoryDashboard(this.value)" disabled>
+      <option value="">-- Select a meet --</option>
     </select>
     <button class="reorder-save" style="margin:0;" id="btn-export-csv"
             onclick="exportHistoryCSV()" disabled>Export CSV</button>
@@ -341,7 +347,7 @@ function setView(v) {
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
-  if (v === 'history') loadHistoryMeets();
+  if (v === 'history') loadSnapshots();
 }
 setView('schedule');  // set initial active state
 
@@ -700,31 +706,61 @@ function sortByEventHeat() {
 }
 
 // ---------------------------------------------------------------------------
-// HISTORY
+// HISTORY  (reads from snapshot .db files)
 // ---------------------------------------------------------------------------
-let historyMeetId = null;
+let historyMeetId   = null;
+let historySnapFile = null;
 
-function loadHistoryMeets() {
-  fetch('/api/meets')
+function loadSnapshots() {
+  fetch('/api/snapshots')
+    .then(r => r.json())
+    .then(snaps => {
+      const sel  = document.getElementById('history-snapshot-select');
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">-- Select a snapshot --</option>';
+      snaps.forEach(s => {
+        if (!s.exists) return;
+        const opt = document.createElement('option');
+        opt.value = s.snapshot_file;
+        const kb  = s.size_bytes ? ' (' + Math.round(s.size_bytes / 1024) + ' KB)' : '';
+        opt.textContent = s.trigger + '  \u2014  ' + s.created_at.substring(0, 16) + kb;
+        sel.appendChild(opt);
+      });
+      if (prev) { sel.value = prev; onSnapshotChange(prev); }
+    });
+}
+
+function onSnapshotChange(filename) {
+  historySnapFile = filename || null;
+  historyMeetId   = null;
+  const meetSel = document.getElementById('history-meet-select');
+  meetSel.innerHTML = '<option value="">-- Select a meet --</option>';
+  meetSel.disabled  = !filename;
+  document.getElementById('history-table').innerHTML = '';
+  document.getElementById('history-meet-info').textContent = '';
+  document.getElementById('btn-export-csv').disabled = true;
+  if (!filename) return;
+
+  fetch('/api/snapshots/' + encodeURIComponent(filename) + '/meets')
     .then(r => r.json())
     .then(meets => {
-      const sel = document.getElementById('history-meet-select');
-      const prev = sel.value;
-      sel.innerHTML = '<option value="">-- Select a past meet --</option>';
       meets.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m.meet_id;
         opt.textContent = m.meet_name +
           (m.meet_date ? ' \u2014 ' + m.meet_date : '') +
           (m.active ? ' [active]' : '');
-        sel.appendChild(opt);
+        meetSel.appendChild(opt);
       });
-      if (prev) { sel.value = prev; loadHistoryDashboard(prev); }
+      if (meets.length === 1) {
+        meetSel.value = meets[0].meet_id;
+        loadHistoryDashboard(meets[0].meet_id);
+      }
     });
 }
 
 function loadHistoryDashboard(meetId) {
-  if (!meetId) {
+  if (!meetId || !historySnapFile) {
     document.getElementById('history-table').innerHTML = '';
     document.getElementById('history-meet-info').textContent = '';
     document.getElementById('btn-export-csv').disabled = true;
@@ -732,7 +768,8 @@ function loadHistoryDashboard(meetId) {
     return;
   }
   historyMeetId = meetId;
-  fetch('/api/history/' + encodeURIComponent(meetId) + '/dashboard')
+  fetch('/api/snapshots/' + encodeURIComponent(historySnapFile) +
+        '/dashboard/' + encodeURIComponent(meetId))
     .then(r => r.json())
     .then(data => {
       const meet = data.meet || {};
@@ -781,11 +818,12 @@ function loadHistoryDashboard(meetId) {
 }
 
 function exportHistoryCSV() {
-  if (!historyMeetId) return;
+  if (!historyMeetId || !historySnapFile) return;
   const btn = document.getElementById('btn-export-csv');
   btn.textContent = 'Exporting...';
   btn.disabled = true;
-  fetch('/api/history/' + encodeURIComponent(historyMeetId) + '/export', {method:'POST'})
+  fetch('/api/snapshots/' + encodeURIComponent(historySnapFile) +
+        '/export/' + encodeURIComponent(historyMeetId), {method: 'POST'})
     .then(r => r.json())
     .then(data => {
       btn.textContent = 'Export CSV';
@@ -1196,22 +1234,61 @@ def api_export_race_log():
 
 
 # ---------------------------------------------------------------------------
-# HISTORY ROUTES (read-only, any meet_id)
+# SNAPSHOT HISTORY ROUTES (read-only, from snapshot .db files)
 # ---------------------------------------------------------------------------
 
-@app.route("/api/history/<meet_id>/dashboard")
-def api_history_dashboard(meet_id):
-    all_meets = {m["meet_id"]: m for m in get_all_meets()}
-    if meet_id not in all_meets:
-        abort(404, "Meet not found")
-    rows = get_race_dashboard(meet_id)
-    return jsonify({"meet": all_meets[meet_id], "rows": rows})
+def _resolve_snapshot(filename):
+    """Validate snapshot filename and return its absolute path, or abort."""
+    if not filename.startswith("cts_tracker_"):
+        abort(400, "Invalid snapshot filename")
+    path = os.path.join(config.SNAPSHOT_DIR, filename)
+    snap_root = os.path.normpath(config.SNAPSHOT_DIR) + os.sep
+    if not os.path.normpath(path).startswith(snap_root):
+        abort(400, "Invalid snapshot path")
+    if not os.path.isfile(path):
+        abort(404, "Snapshot file not found")
+    return path
 
 
-@app.route("/api/history/<meet_id>/export", methods=["POST"])
-def api_history_export(meet_id):
-    all_meets = {m["meet_id"]: m for m in get_all_meets()}
-    if meet_id not in all_meets:
-        abort(404, "Meet not found")
-    path = export_race_log_csv(meet_id)
-    return jsonify({"exported": path})
+@app.route("/api/snapshots")
+def api_snapshots():
+    snaps = get_snapshots()
+    for s in snaps:
+        path = os.path.join(config.SNAPSHOT_DIR, s["snapshot_file"])
+        s["exists"]     = os.path.isfile(path)
+        s["size_bytes"] = os.path.getsize(path) if s["exists"] else None
+    return jsonify(snaps)
+
+
+@app.route("/api/snapshots/<filename>/meets")
+def api_snapshot_meets(filename):
+    snap_path = _resolve_snapshot(filename)
+    return jsonify(get_all_meets(db_path=snap_path))
+
+
+@app.route("/api/snapshots/<filename>/dashboard/<meet_id>")
+def api_snapshot_dashboard(filename, meet_id):
+    snap_path = _resolve_snapshot(filename)
+    meets = {m["meet_id"]: m for m in get_all_meets(db_path=snap_path)}
+    if meet_id not in meets:
+        abort(404, "Meet not found in snapshot")
+    rows = get_race_dashboard(meet_id, db_path=snap_path)
+    return jsonify({"meet": meets[meet_id], "rows": rows})
+
+
+@app.route("/api/snapshots/<filename>/export/<meet_id>", methods=["POST"])
+def api_snapshot_export(filename, meet_id):
+    snap_path = _resolve_snapshot(filename)
+    meets = {m["meet_id"]: m for m in get_all_meets(db_path=snap_path)}
+    if meet_id not in meets:
+        abort(404, "Meet not found in snapshot")
+    rows = get_full_log(meet_id, db_path=snap_path)
+    timestamp  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    snap_tag   = filename.replace("cts_tracker_", "").replace(".db", "")
+    export_path = os.path.join(config.BACKUP_DIR, f"{timestamp}_snapshot_{snap_tag}_{meet_id}.csv")
+    if rows:
+        with open(export_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
+    return jsonify({"exported": export_path})
