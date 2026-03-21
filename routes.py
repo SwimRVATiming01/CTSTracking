@@ -1258,13 +1258,10 @@ def api_snapshots():
         s["exists"]     = os.path.isfile(path)
         s["size_bytes"] = os.path.getsize(path) if s["exists"] else None
         # created_at is UTC — derive local time from the filename instead
-        # filename format: cts_tracker_<trigger>_YYYY-MM-DD_HH-MM-SS.db
+        # filename format: cts_tracker_YYYY-MM-DD_HH-MM-SS.db
         try:
-            # Strip prefix and extension, then take the last two underscore-segments (date + time)
-            bare = s["snapshot_file"].replace("cts_tracker_", "").replace(".db", "")
-            parts = bare.split("_")
-            date_part = parts[-2]   # YYYY-MM-DD
-            time_part = parts[-1]   # HH-MM-SS
+            ts = s["snapshot_file"].replace("cts_tracker_", "").replace(".db", "")
+            date_part, time_part = ts.split("_", 1)
             s["local_time"] = date_part + " " + time_part.replace("-", ":")
         except Exception:
             s["local_time"] = s["created_at"]

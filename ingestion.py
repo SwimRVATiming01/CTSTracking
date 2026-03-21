@@ -384,7 +384,6 @@ def approve_schedule(scrub_races=True, append=False):
         result = import_schedule(filepath, active["meet_id"], append=True)
         with _pending_schedule_lock:
             _pending_schedule.clear()
-        snapshot_db("post_import")
         log.info(f"Schedule appended: meet={active['meet_id']}")
         return {"status": "appended", "meet_id": active["meet_id"], **result}
 
@@ -415,7 +414,6 @@ def approve_schedule(scrub_races=True, append=False):
     with _pending_schedule_lock:
         _pending_schedule.clear()
 
-    snapshot_db("post_import")
     log.info(f"Schedule imported: meet={meet_id} meet_name={meet_name} scrub={scrub_races}")
     return {"status": "imported", "meet_id": meet_id, "scrubbed": scrub_races, **result}
 
@@ -431,7 +429,6 @@ def ingest_schedule_file(filepath, meet_id=None, session_override=None):
         _backup_raw_file(filepath, "schedule")
         try:
             result = import_schedule(filepath, meet_id, session_override)
-            snapshot_db("post_import")
             return {"status": "imported", "meet_id": meet_id, **result}
         except Exception as e:
             _log_ingestion(filename, "schedule", None, None, "error", str(e))

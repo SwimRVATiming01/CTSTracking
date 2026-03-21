@@ -637,7 +637,7 @@ def wipe_database():
 def snapshot_db(trigger="scheduled"):
     """Live SQLite backup using the backup API. Safe during active writes."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    snap_file = f"cts_tracker_{trigger}_{timestamp}.db"
+    snap_file = f"cts_tracker_{timestamp}.db"
     snap_path = os.path.join(config.SNAPSHOT_DIR, snap_file)
     try:
         src = sqlite3.connect(config.DB_PATH)
