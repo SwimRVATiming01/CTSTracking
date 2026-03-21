@@ -456,7 +456,7 @@ function loadDashboard() {
     .then(data => {
       if (data.meet) {
         const raw = data.meet.meet_name || '';
-        document.getElementById('meet-name').textContent = raw.replace(/\s*-\s*\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\s*$/, '');
+        document.getElementById('meet-name').textContent = raw.replace(/\s*-\s*\d{1,2}\/\d{1,2}\/\d{4}\s+to\s+\d{1,2}\/\d{1,2}\/\d{4}\s*$/, '');
       }
 
       // Final Heat ETA bar

@@ -206,7 +206,7 @@ def import_schedule(filepath, meet_id, session_override=None, append=False):
 
 def _clean_meet_name(raw):
     """Strip trailing date range e.g. ' - 2026-03-05 to 2026-03-08'."""
-    return re.sub(r'\s*-\s*\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\s*$', '', raw).strip()
+    return re.sub(r'\s*-\s*\d{1,2}/\d{1,2}/\d{4}\s+to\s+\d{1,2}/\d{1,2}/\d{4}\s*$', '', raw).strip()
 
 
 def _extract_meet_info_from_csv(filepath):
