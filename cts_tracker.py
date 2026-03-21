@@ -53,10 +53,13 @@ if __name__ == "__main__":
     # Start watchdog
     start_watchdog()
 
-    # Start snapshot scheduler in background
-    snap_thread = threading.Thread(target=_snapshot_scheduler, daemon=True)
-    snap_thread.start()
-    log.info(f"Snapshot scheduler started (every {config.SNAPSHOT_INTERVAL_MINUTES} min)")
+    # Start snapshot scheduler in background (only if enabled)
+    if config.SNAPSHOT_INTERVAL_MINUTES > 0:
+        snap_thread = threading.Thread(target=_snapshot_scheduler, daemon=True)
+        snap_thread.start()
+        log.info(f"Snapshot scheduler started (every {config.SNAPSHOT_INTERVAL_MINUTES} min)")
+    else:
+        log.info("Snapshot scheduler disabled — snapshots taken on schedule import only")
 
     # Start Flask
     log.info(f"Dashboard available at http://{config.FLASK_HOST}:{config.FLASK_PORT}")

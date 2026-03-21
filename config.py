@@ -61,11 +61,12 @@ DOLPHIN_PENDING_TIMEOUT_SECONDS = 0
 # BACKUP & SNAPSHOT SETTINGS
 # ---------------------------------------------------------------------------
 
-# How often (in minutes) to take a full database snapshot
-SNAPSHOT_INTERVAL_MINUTES = 30
+# Snapshots are taken only on schedule import (pre_import / post_import).
+# Scheduled periodic snapshots are disabled — SQLite WAL handles crash recovery.
+SNAPSHOT_INTERVAL_MINUTES = 0   # 0 = disabled
 
 # Number of snapshots to keep before rotating old ones out (0 = keep all)
-SNAPSHOT_KEEP_COUNT = 48  # 48 x 30min = 24 hours of history
+SNAPSHOT_KEEP_COUNT = 0   # 0 = keep all snapshots, never auto-delete
 
 # ---------------------------------------------------------------------------
 # WATCHDOG SETTINGS
