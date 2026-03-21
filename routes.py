@@ -302,7 +302,7 @@ DASHBOARD_HTML = """
         <th>5</th><th>6</th><th>7</th><th>8</th>
         <th>CTS #</th>
         <th>Dolphin #</th>
-        <th>Dataset</th>
+        <th>Dolphin<br>Dataset</th>
         <th>Actual Start</th>
         <th>Finish</th>
       </tr>
