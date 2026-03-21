@@ -308,7 +308,7 @@ def ingest_dolphin_file(filepath):
     matched_id = None
     if fn["file_time"]:
         matched_id = _match_dolphin_to_cts(
-            fn["dolphin_race_num"], fn["machine_id"], fn["file_time"], filename
+            fn["dolphin_race_num"], fn.get("dolphin_dataset"), fn["machine_id"], fn["file_time"], filename
         )
 
     if matched_id:
@@ -484,12 +484,12 @@ def _add_pending_dolphin(fn, filename):
     ft = fn["file_time"].isoformat() if fn["file_time"] else None
     with get_write_conn() as conn:
         conn.execute(
-            "INSERT INTO pending_dolphin (dolphin_race_num,file_time,source_machine,filename) VALUES (?,?,?,?)",
-            (fn["dolphin_race_num"], ft, fn.get("machine_id"), filename)
+            "INSERT INTO pending_dolphin (dolphin_race_num,dolphin_dataset,file_time,source_machine,filename) VALUES (?,?,?,?,?)",
+            (fn["dolphin_race_num"], fn.get("dolphin_dataset"), ft, fn.get("machine_id"), filename)
         )
 
 
-def _match_dolphin_to_cts(dolphin_race_num, machine_id, file_time, filename):
+def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_time, filename):
     """Find closest unmatched CTS race_log entry within the time window."""
     window = timedelta(seconds=config.DOLPHIN_MATCH_WINDOW_SECONDS)
     low  = (file_time - window).isoformat()
@@ -511,12 +511,12 @@ def _match_dolphin_to_cts(dolphin_race_num, machine_id, file_time, filename):
 
     with get_write_conn() as conn:
         conn.execute(
-            """UPDATE race_log SET dolphin_race_num=?,dolphin_file_time=?,
+            """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
                dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1
                WHERE id=?""",
-            (dolphin_race_num, ft, machine_id, filename, delta, row["id"])
+            (dolphin_race_num, dolphin_dataset, ft, machine_id, filename, delta, row["id"])
         )
-    log.info(f"Dolphin #{dolphin_race_num} matched to race_log id={row['id']} (Δ{delta:.1f}s)")
+    log.info(f"Dolphin #{dolphin_race_num} (dataset={dolphin_dataset}) matched to race_log id={row['id']} (Δ{delta:.1f}s)")
     return row["id"]
 
 
@@ -544,10 +544,10 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
 
     with get_write_conn() as conn:
         conn.execute(
-            """UPDATE race_log SET dolphin_race_num=?,dolphin_file_time=?,
+            """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
                dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1
                WHERE id=?""",
-            (pending["dolphin_race_num"], pending["file_time"],
+            (pending["dolphin_race_num"], pending["dolphin_dataset"], pending["file_time"],
              pending["source_machine"], pending["filename"], delta, race_log_id)
         )
         conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS race_log (
     cts_source_machine      TEXT,
     cts_filename            TEXT,
     dolphin_race_num        INTEGER,
+    dolphin_dataset         INTEGER,
     dolphin_file_time       TEXT,
     dolphin_source_machine  TEXT,
     dolphin_filename        TEXT,
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS race_log (
 CREATE TABLE IF NOT EXISTS pending_dolphin (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     dolphin_race_num  INTEGER NOT NULL,
+    dolphin_dataset   INTEGER,
     file_time         TEXT NOT NULL,
     source_machine    TEXT NOT NULL,
     filename          TEXT NOT NULL,
@@ -153,6 +155,15 @@ def init_db():
     log.info(f"Initializing database at {config.DB_PATH}")
     with get_write_conn() as conn:
         conn.executescript(SCHEMA)
+        # Migrations for columns added after initial schema
+        for sql in [
+            "ALTER TABLE race_log ADD COLUMN dolphin_dataset INTEGER",
+            "ALTER TABLE pending_dolphin ADD COLUMN dolphin_dataset INTEGER",
+        ]:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass  # Column already exists
     log.info("Database ready.")
 
 
@@ -340,6 +351,7 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             r.cts_file_time,
             r.cts_source_machine,
             r.dolphin_race_num,
+            r.dolphin_dataset,
             r.dolphin_file_time,
             r.dolphin_source_machine,
             r.match_delta_sec,

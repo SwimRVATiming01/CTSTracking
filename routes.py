@@ -302,6 +302,7 @@ DASHBOARD_HTML = """
         <th>5</th><th>6</th><th>7</th><th>8</th>
         <th>CTS #</th>
         <th>Dolphin #</th>
+        <th>Dataset</th>
         <th>Actual Start</th>
         <th>Finish</th>
       </tr>
@@ -784,6 +785,7 @@ function loadHistoryDashboard(meetId) {
             (hasRace ? row.cts_race_num : '\u2014') + '</td>';
           const dolCell = '<td' + (row.dolphin_gap_flag ? ' class="gap-flag"' : '') + '>' +
             (row.dolphin_race_num ?? '\u2014') + '</td>';
+          const datasetCell = '<td>' + (row.dolphin_dataset ?? '\u2014') + '</td>';
           const finish = row.cts_file_time
             ? (row.cts_file_time.length >= 19 ? row.cts_file_time.substring(11,19) : row.cts_file_time)
             : '\u2014';
@@ -792,7 +794,7 @@ function loadHistoryDashboard(meetId) {
             '<td>' + row.heat + '</td>' +
             '<td>' + (row.effective_start || '\u2014') + '</td>' +
             '<td>' + delta + '</td>' +
-            lanes + ctsCell + dolCell +
+            lanes + ctsCell + dolCell + datasetCell +
             '<td>' + (row.cts_start_time || '\u2014') + '</td>' +
             '<td>' + finish + '</td>' +
             '</tr>';

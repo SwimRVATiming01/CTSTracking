@@ -62,7 +62,7 @@ def parse_dolphin_filename(filename):
 
     Returns dict: dolphin_race_num (int), machine_id, file_time (datetime), original_name
     """
-    result = {"dolphin_race_num": None, "machine_id": None, "file_time": None, "original_name": filename}
+    result = {"dolphin_race_num": None, "dolphin_dataset": None, "machine_id": None, "file_time": None, "original_name": filename}
     stem = os.path.splitext(filename)[0]
     parts = stem.split("__")
     result["original_name"] = parts[0]
@@ -79,6 +79,9 @@ def parse_dolphin_filename(filename):
         m = re.search(r"(\d+)$", segments[-1])
         if m:
             result["dolphin_race_num"] = int(m.group(1))
+        ds = re.match(r"^(\d+)$", segments[0])
+        if ds:
+            result["dolphin_dataset"] = int(ds.group(1))
 
     if result["dolphin_race_num"] is None:
         log.warning(f"Could not extract race number from Dolphin filename: {filename}")
