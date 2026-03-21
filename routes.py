@@ -64,7 +64,7 @@ DASHBOARD_HTML = """
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
     .status-pill.warn { background: #8b4000; }
     #pill-p1 { background: #1a4a1a; color: #6bff6b; }
-    #pill-p2 { background: #4a1a1a; color: #ff6b6b; }
+    #pill-p2 { background: #0a2a4a; color: #00cfff; }
 
     /* NAV */
     nav { background: #16213e; padding: 5px 14px; display: flex; gap: 6px;
