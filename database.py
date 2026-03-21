@@ -392,6 +392,15 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
         conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
         conn.row_factory = sqlite3.Row
         try:
+            # Migrate older snapshot files that predate new columns
+            for sql in [
+                "ALTER TABLE race_log ADD COLUMN dolphin_dataset INTEGER",
+                "ALTER TABLE pending_dolphin ADD COLUMN dolphin_dataset INTEGER",
+            ]:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass
             rows = [dict(r) for r in conn.execute(query, params).fetchall()]
         finally:
             conn.close()
