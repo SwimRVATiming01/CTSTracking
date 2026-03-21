@@ -45,7 +45,7 @@ def _parse_event_col(event_col):
 
 
 def _parse_heat_col(heat_col):
-    result = {"heat_num": None, "heat_label": None, "heat_type": None, "start_time": None}
+    result = {"heat_num": None, "heat_label": None, "heat_type": "Timed Finals", "start_time": None}
     heat_col = heat_col.strip()
 
     m = re.match(r"Heat\s+(\d+)", heat_col, re.IGNORECASE)
