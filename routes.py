@@ -234,11 +234,13 @@ DASHBOARD_HTML = """
         <div class="pool-label">POOL 1</div>
         <div class="pool-row">Last: <span id="p1-last">&#8212;</span></div>
         <div class="pool-row">Current: <span id="p1-current">&#8212;</span></div>
+        <div class="pool-row">Next: <span id="p1-next">&#8212;</span></div>
       </div>
       <div class="pool-block p2" id="block-p2">
         <div class="pool-label">POOL 2</div>
         <div class="pool-row">Last: <span id="p2-last">&#8212;</span></div>
         <div class="pool-row">Current: <span id="p2-current">&#8212;</span></div>
+        <div class="pool-row">Next: <span id="p2-next">&#8212;</span></div>
       </div>
       <span class="status-pill" id="last-update">&#8212;</span>
     </div>
@@ -488,15 +490,19 @@ function loadDashboard() {
 
       // Pool status blocks
       const rows = data.rows || [];
-      const p1Last    = rows.find(r => r.is_current_p1);
-      const p2Last    = rows.find(r => r.is_current_p2);
-      const p1Current = rows.find(r => r.is_next_heat);
-      const p2Current = rows.find(r => r.is_next_heat_p2);
+      const p1Last    = rows.find(r => r.is_last_p1);
+      const p2Last    = rows.find(r => r.is_last_p2);
+      const p1Current = rows.find(r => r.is_current_p1);
+      const p2Current = rows.find(r => r.is_current_p2);
+      const p1Next = rows.find(r => r.is_next_p1);
+      const p2Next = rows.find(r => r.is_next_p2);
       const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + r.heat : '\u2014';
       document.getElementById('p1-last').textContent    = p1Last    ? fmtHeat(p1Last)    + '  #' + p1Last.cts_race_num : '\u2014';
       document.getElementById('p1-current').textContent = fmtHeat(p1Current);
+      document.getElementById('p1-next').textContent    = fmtHeat(p1Next);
       document.getElementById('p2-last').textContent    = p2Last    ? fmtHeat(p2Last)    + '  #' + p2Last.cts_race_num : '\u2014';
       document.getElementById('p2-current').textContent = fmtHeat(p2Current);
+      document.getElementById('p2-next').textContent    = fmtHeat(p2Next);
 
       document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
@@ -512,8 +518,8 @@ function renderRow(row) {
 
   // Row class — pool current-heat highlights take priority over heat-one
   let cls = '';
-  if      (row.is_next_heat)             cls = 'current-p1';
-  else if (row.is_next_heat_p2)          cls = 'current-p2';
+  if      (row.is_current_p1)            cls = 'current-p1';
+  else if (row.is_current_p2)            cls = 'current-p2';
   else if (String(row.heat) === '1')     cls = 'heat-one';
   else if (!hasRace)                     cls = 'unmatched';
 
@@ -936,23 +942,32 @@ def api_dashboard():
     session = request.args.get("session")
     rows = get_race_dashboard(meet["meet_id"], session)
 
-    # Apply Companion heat overrides if set
+    # Apply Companion current heat overrides if set
     if _companion_p1 or _companion_p2:
         for row in rows:
-            row["is_next_heat"]    = False
-            row["is_next_heat_p2"] = False
+            row["is_current_p1"] = False
+            row["is_current_p2"] = False
         if _companion_p1:
             for row in rows:
                 if (str(row.get("event_id")) == str(_companion_p1["event_id"])
                         and (str(row.get("heat")) == str(_companion_p1["heat"])
                              or str(row.get("heat_label") or "") == str(_companion_p1["heat"]))):
-                    row["is_next_heat"] = True
+                    row["is_current_p1"] = True
         if _companion_p2:
             for row in rows:
                 if (str(row.get("event_id")) == str(_companion_p2["event_id"])
                         and (str(row.get("heat")) == str(_companion_p2["heat"])
                              or str(row.get("heat_label") or "") == str(_companion_p2["heat"]))):
-                    row["is_next_heat_p2"] = True
+                    row["is_current_p2"] = True
+
+    # Compute next heat per pool — first unrun row after each pool's current in schedule order
+    ordered = sorted(rows, key=lambda r: r["heat_order"])
+    for pool_key, next_key in [("is_current_p1", "is_next_p1"), ("is_current_p2", "is_next_p2")]:
+        current = next((r for r in ordered if r.get(pool_key)), None)
+        if current:
+            nxt = next((r for r in ordered if r["heat_order"] > current["heat_order"]), None)
+            if nxt:
+                nxt[next_key] = True
 
     return jsonify({
         "meet":      meet,

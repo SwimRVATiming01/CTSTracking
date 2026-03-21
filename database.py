@@ -421,29 +421,30 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
         else:
             row["pool"] = 2
 
-    # Current heat per pool (row with highest CTS race number in each pool)
-    # Used by status pills and Companion endpoints.
+    # Last ingested heat per pool (row with highest CTS race number in each pool)
     p1_max = max((r["cts_race_num"] for r in rows if r["pool"] == 1), default=None)
     p2_max = max((r["cts_race_num"] for r in rows if r["pool"] == 2), default=None)
     for row in rows:
         n = row.get("cts_race_num")
-        row["is_current_p1"] = (n is not None and row["pool"] == 1 and n == p1_max)
-        row["is_current_p2"] = (n is not None and row["pool"] == 2 and n == p2_max)
+        row["is_last_p1"] = (n is not None and row["pool"] == 1 and n == p1_max)
+        row["is_last_p2"] = (n is not None and row["pool"] == 2 and n == p2_max)
 
-    # Next heat = row immediately after the last run heat in schedule order.
-    # If no heats have run yet, fall back to the first heat in schedule order.
-    # Used for the green table row highlight.
+    # Current heat = row immediately after the last run heat in schedule order (auto-detection).
+    # Companion overrides this in routes.py. Falls back to first heat if nothing has run.
     run = [r for r in rows if r.get("cts_race_num") is not None]
     if run:
         last_run_order = max(r["heat_order"] for r in run)
         ordered = sorted(rows, key=lambda r: r["heat_order"])
-        next_row = next((r for r in ordered if r["heat_order"] > last_run_order), None)
-        next_id = next_row["schedule_id"] if next_row else None
+        current_row = next((r for r in ordered if r["heat_order"] > last_run_order), None)
+        current_id = current_row["schedule_id"] if current_row else None
     else:
         ordered = sorted(rows, key=lambda r: r["heat_order"])
-        next_id = ordered[0]["schedule_id"] if ordered else None
+        current_id = ordered[0]["schedule_id"] if ordered else None
     for row in rows:
-        row["is_next_heat"] = (row["schedule_id"] == next_id)
+        row["is_current_p1"]  = (row["schedule_id"] == current_id)
+        row["is_current_p2"]  = False  # Only set by Companion in routes.py
+        row["is_next_p1"]     = False
+        row["is_next_p2"]     = False
 
     # Sequence gap flagging per pool
     for pool_num, threshold_check in [(1, lambda n: n < POOL2_THRESHOLD),
@@ -532,7 +533,7 @@ def get_current_heat_state(meet_id):
     rows = get_race_dashboard(meet_id)
     result = {}
 
-    for pool_num, is_current_key in [(1, "is_current_p1"), (2, "is_current_p2")]:
+    for pool_num, is_current_key in [(1, "is_last_p1"), (2, "is_last_p2")]:
         current_row = next((r for r in rows if r.get(is_current_key)), None)
         if not current_row:
             result[f"pool{pool_num}"] = {
