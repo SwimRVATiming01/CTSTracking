@@ -60,11 +60,17 @@ DASHBOARD_HTML = """
              gap: 12px; border-bottom: 2px solid #0f3460; flex-wrap: wrap; }
     header h1 { font-size: 15px; color: #e94560; letter-spacing: 1px; white-space: nowrap; }
     .meet-name { color: #a0c4ff; font-size: 12px; }
-    .status-bar { display: flex; gap: 8px; font-size: 11px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+    .status-bar { display: flex; gap: 12px; font-size: 11px; margin-left: auto; flex-wrap: wrap; align-items: center; }
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
     .status-pill.warn { background: #8b4000; }
-    #pill-p1 { background: #1a4a1a; color: #6bff6b; }
-    #pill-p2 { background: #0a2a4a; color: #00cfff; }
+    .pool-block { display: flex; flex-direction: column; gap: 1px; border-left: 3px solid; padding-left: 7px; line-height: 1.5; }
+    .pool-block.p1 { border-color: #6bff6b; }
+    .pool-block.p2 { border-color: #00cfff; }
+    .pool-block .pool-label { font-size: 10px; font-weight: bold; letter-spacing: 1px; }
+    .pool-block.p1 .pool-label { color: #6bff6b; }
+    .pool-block.p2 .pool-label { color: #00cfff; }
+    .pool-block .pool-row { font-size: 10px; color: #888; white-space: nowrap; }
+    .pool-block .pool-row span { color: #e0e0e0; }
 
     /* NAV */
     nav { background: #16213e; padding: 5px 14px; display: flex; gap: 6px;
@@ -224,8 +230,16 @@ DASHBOARD_HTML = """
     <h1>CTS TRACKER</h1>
     <span class="meet-name" id="meet-name">Loading...</span>
     <div class="status-bar">
-      <span class="status-pill" id="pill-p1">Pool 1: &#8212;</span>
-      <span class="status-pill" id="pill-p2">Pool 2: &#8212;</span>
+      <div class="pool-block p1" id="block-p1">
+        <div class="pool-label">POOL 1</div>
+        <div class="pool-row">Last: <span id="p1-last">&#8212;</span></div>
+        <div class="pool-row">Current: <span id="p1-current">&#8212;</span></div>
+      </div>
+      <div class="pool-block p2" id="block-p2">
+        <div class="pool-label">POOL 2</div>
+        <div class="pool-row">Last: <span id="p2-last">&#8212;</span></div>
+        <div class="pool-row">Current: <span id="p2-current">&#8212;</span></div>
+      </div>
       <span class="status-pill" id="last-update">&#8212;</span>
     </div>
   </header>
@@ -472,14 +486,17 @@ function loadDashboard() {
         etaBar.classList.remove('show');
       }
 
-      // Status pills
+      // Pool status blocks
       const rows = data.rows || [];
-      const p1 = rows.find(r => r.is_current_p1);
-      const p2 = rows.find(r => r.is_current_p2);
-      document.getElementById('pill-p1').textContent =
-        p1 ? 'P1: E' + p1.event_id + 'H' + p1.heat + ' #' + p1.cts_race_num : 'Pool 1: \u2014';
-      document.getElementById('pill-p2').textContent =
-        p2 ? 'P2: E' + p2.event_id + 'H' + p2.heat + ' #' + p2.cts_race_num : 'Pool 2: \u2014';
+      const p1Last    = rows.find(r => r.is_current_p1);
+      const p2Last    = rows.find(r => r.is_current_p2);
+      const p1Current = rows.find(r => r.is_next_heat);
+      const p2Current = rows.find(r => r.is_next_heat_p2);
+      const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + r.heat : '\u2014';
+      document.getElementById('p1-last').textContent    = p1Last    ? fmtHeat(p1Last)    + '  #' + p1Last.cts_race_num : '\u2014';
+      document.getElementById('p1-current').textContent = fmtHeat(p1Current);
+      document.getElementById('p2-last').textContent    = p2Last    ? fmtHeat(p2Last)    + '  #' + p2Last.cts_race_num : '\u2014';
+      document.getElementById('p2-current').textContent = fmtHeat(p2Current);
 
       document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
