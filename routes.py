@@ -283,12 +283,9 @@ DASHBOARD_HTML = """
 <!-- History View -->
 <div class="container" id="history-view" style="display:none">
   <div class="history-toolbar">
-    <select id="history-snapshot-select" class="history-select" style="min-width:280px"
+    <select id="history-snapshot-select" class="history-select" style="min-width:380px"
             onchange="onSnapshotChange(this.value)">
       <option value="">-- Select a snapshot --</option>
-    </select>
-    <select id="history-meet-select" class="history-select" onchange="loadHistoryDashboard(this.value)" disabled>
-      <option value="">-- Select a meet --</option>
     </select>
     <button class="reorder-save" style="margin:0;" id="btn-export-csv"
             onclick="exportHistoryCSV()" disabled>Export CSV</button>
@@ -722,8 +719,10 @@ function loadSnapshots() {
         if (!s.exists) return;
         const opt = document.createElement('option');
         opt.value = s.snapshot_file;
-        const kb  = s.size_bytes ? ' (' + Math.round(s.size_bytes / 1024) + ' KB)' : '';
-        opt.textContent = s.trigger + '  \u2014  ' + s.local_time + kb;
+        opt.dataset.meetId = s.meet_id || '';
+        const kb   = s.size_bytes ? ' (' + Math.round(s.size_bytes / 1024) + ' KB)' : '';
+        const name = s.meet_name ? s.meet_name + '  \u2014  ' : '';
+        opt.textContent = name + s.local_time + kb;
         sel.appendChild(opt);
       });
       if (prev) { sel.value = prev; onSnapshotChange(prev); }
@@ -733,30 +732,14 @@ function loadSnapshots() {
 function onSnapshotChange(filename) {
   historySnapFile = filename || null;
   historyMeetId   = null;
-  const meetSel = document.getElementById('history-meet-select');
-  meetSel.innerHTML = '<option value="">-- Select a meet --</option>';
-  meetSel.disabled  = !filename;
   document.getElementById('history-table').innerHTML = '';
   document.getElementById('history-meet-info').textContent = '';
   document.getElementById('btn-export-csv').disabled = true;
   if (!filename) return;
 
-  fetch('/api/snapshots/' + encodeURIComponent(filename) + '/meets')
-    .then(r => r.json())
-    .then(meets => {
-      meets.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m.meet_id;
-        opt.textContent = m.meet_name +
-          (m.meet_date ? ' \u2014 ' + m.meet_date : '') +
-          (m.active ? ' [active]' : '');
-        meetSel.appendChild(opt);
-      });
-      if (meets.length === 1) {
-        meetSel.value = meets[0].meet_id;
-        loadHistoryDashboard(meets[0].meet_id);
-      }
-    });
+  const sel    = document.getElementById('history-snapshot-select');
+  const meetId = sel.options[sel.selectedIndex].dataset.meetId;
+  if (meetId) loadHistoryDashboard(meetId);
 }
 
 function loadHistoryDashboard(meetId) {
@@ -1265,6 +1248,17 @@ def api_snapshots():
             s["local_time"] = date_part + " " + time_part.replace("-", ":")
         except Exception:
             s["local_time"] = s["created_at"]
+        # Pull meet name and meet_id directly from the snapshot file
+        s["meet_name"] = None
+        s["meet_id"]   = None
+        if s["exists"]:
+            try:
+                meets = get_all_meets(db_path=path)
+                if meets:
+                    s["meet_name"] = meets[0]["meet_name"]
+                    s["meet_id"]   = meets[0]["meet_id"]
+            except Exception:
+                pass
     return jsonify(snaps)
 
 
