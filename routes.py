@@ -63,6 +63,8 @@ DASHBOARD_HTML = """
     .status-bar { display: flex; gap: 8px; font-size: 11px; margin-left: auto; flex-wrap: wrap; align-items: center; }
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
     .status-pill.warn { background: #8b4000; }
+    #pill-p1 { background: #1a4a1a; color: #6bff6b; }
+    #pill-p2 { background: #4a1a1a; color: #ff6b6b; }
 
     /* NAV */
     nav { background: #16213e; padding: 5px 14px; display: flex; gap: 6px;
@@ -224,7 +226,6 @@ DASHBOARD_HTML = """
     <div class="status-bar">
       <span class="status-pill" id="pill-p1">Pool 1: &#8212;</span>
       <span class="status-pill" id="pill-p2">Pool 2: &#8212;</span>
-      <span class="status-pill" id="pill-unmatched">Unmatched: &#8212;</span>
       <span class="status-pill" id="last-update">&#8212;</span>
     </div>
   </header>
@@ -453,7 +454,10 @@ function loadDashboard() {
   return fetch('/api/dashboard')
     .then(r => r.json())
     .then(data => {
-      if (data.meet) document.getElementById('meet-name').textContent = data.meet.meet_name || '';
+      if (data.meet) {
+        const raw = data.meet.meet_name || '';
+        document.getElementById('meet-name').textContent = raw.replace(/\s*-\s*\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2}\s*$/, '');
+      }
 
       // Final Heat ETA bar
       const eta = data.final_eta;
@@ -477,10 +481,6 @@ function loadDashboard() {
       document.getElementById('pill-p2').textContent =
         p2 ? 'P2: E' + p2.event_id + 'H' + p2.heat + ' #' + p2.cts_race_num : 'Pool 2: \u2014';
 
-      const um = (data.pending || {}).unmatched_log || 0;
-      const umPill = document.getElementById('pill-unmatched');
-      umPill.textContent = 'Unmatched: ' + um;
-      umPill.classList.toggle('warn', um > 0);
       document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
 
       // Render rows
