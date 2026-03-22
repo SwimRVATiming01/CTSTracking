@@ -456,14 +456,16 @@ def _write_race_log_from_cts(cts_data, fn, meet_id, filename):
             """INSERT INTO race_log
                (meet_id,event_id,heat,cts_race_num,cts_start_time,
                 cts_file_time,cts_source_machine,cts_filename,
-                active_lanes,missing_lanes,off_times)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                active_lanes,missing_lanes,off_times,button_a_times,button_b_times)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (meet_id, cts_data.get("event_id"), cts_data.get("heat"),
              cts_data.get("cts_race_num"), cts_data.get("cts_start_time"),
              ft, fn.get("machine_id"), filename,
              active_lanes_str,
              cts_data.get("missing_lanes_str", ""),
-             off_times_str)
+             off_times_str,
+             json.dumps(cts_data.get("button_a_times") or []),
+             json.dumps(cts_data.get("button_b_times") or []))
         )
         return cur.lastrowid
 

@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS race_log (
     active_lanes            TEXT,
     missing_lanes           TEXT,
     off_times               TEXT,
+    button_a_times          TEXT,
+    button_b_times          TEXT,
     ingested_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -159,6 +161,8 @@ def init_db():
         for sql in [
             "ALTER TABLE race_log ADD COLUMN dolphin_dataset INTEGER",
             "ALTER TABLE pending_dolphin ADD COLUMN dolphin_dataset INTEGER",
+            "ALTER TABLE race_log ADD COLUMN button_a_times TEXT",
+            "ALTER TABLE race_log ADD COLUMN button_b_times TEXT",
         ]:
             try:
                 conn.execute(sql)

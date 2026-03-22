@@ -496,12 +496,19 @@ function loadDashboard() {
       const p2Current = rows.find(r => r.is_current_p2);
       const p1Next = rows.find(r => r.is_next_p1);
       const p2Next = rows.find(r => r.is_next_p2);
+      const cp1 = data.companion_p1;
+      const cp2 = data.companion_p2;
       const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + r.heat : '\u2014';
-      document.getElementById('p1-last').textContent    = p1Last    ? fmtHeat(p1Last)    + '  #' + p1Last.cts_race_num : '\u2014';
-      document.getElementById('p1-current').textContent = fmtHeat(p1Current);
+      const fmtCompanion = (matched, raw) => {
+        if (matched) return fmtHeat(matched);
+        if (raw) return '(no match: Ev ' + raw.event_id + ' Heat ' + raw.heat + ')';
+        return '\u2014';
+      };
+      document.getElementById('p1-last').textContent    = p1Last ? fmtHeat(p1Last) + '  #' + p1Last.cts_race_num : '\u2014';
+      document.getElementById('p1-current').textContent = fmtCompanion(p1Current, cp1);
       document.getElementById('p1-next').textContent    = fmtHeat(p1Next);
-      document.getElementById('p2-last').textContent    = p2Last    ? fmtHeat(p2Last)    + '  #' + p2Last.cts_race_num : '\u2014';
-      document.getElementById('p2-current').textContent = fmtHeat(p2Current);
+      document.getElementById('p2-last').textContent    = p2Last ? fmtHeat(p2Last) + '  #' + p2Last.cts_race_num : '\u2014';
+      document.getElementById('p2-current').textContent = fmtCompanion(p2Current, cp2);
       document.getElementById('p2-next').textContent    = fmtHeat(p2Next);
 
       document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
@@ -970,10 +977,12 @@ def api_dashboard():
                 nxt[next_key] = True
 
     return jsonify({
-        "meet":      meet,
-        "rows":      rows,
-        "pending":   get_pending_summary(),
-        "final_eta": _compute_final_eta(rows),
+        "meet":        meet,
+        "rows":        rows,
+        "pending":     get_pending_summary(),
+        "final_eta":   _compute_final_eta(rows),
+        "companion_p1": _companion_p1,
+        "companion_p2": _companion_p2,
     })
 
 

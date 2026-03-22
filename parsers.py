@@ -132,11 +132,17 @@ def parse_cts_file(filepath):
     if content is None:
         return None
 
-    # Extract all Glyphs with X, Y, and text
-    glyphs = re.findall(
-        r'<Glyphs[^>]+OriginX="([^"]+)"[^>]+OriginY="([^"]+)"[^>]+UnicodeString="([^"]+)"',
-        content
-    )
+    # Extract all Glyphs with X, Y, Indices, and text
+    glyphs = []
+    for m in re.finditer(r'<Glyphs\b([^>]+)>', content):
+        attrs = m.group(1)
+        ox = re.search(r'OriginX="([^"]+)"', attrs)
+        oy = re.search(r'OriginY="([^"]+)"', attrs)
+        us = re.search(r'UnicodeString="([^"]+)"', attrs)
+        ix = re.search(r'Indices="([^"]+)"', attrs)
+        if ox and oy and us:
+            glyphs.append((ox.group(1), oy.group(1), us.group(1),
+                           ix.group(1) if ix else ""))
     if not glyphs:
         log.error(f"No glyph data found in {filepath}")
         return None
@@ -145,12 +151,13 @@ def parse_cts_file(filepath):
         "event_id": None, "heat": None, "cts_race_num": None,
         "cts_start_time": None, "start_time_raw": None,
         "active_lanes": [], "missing_lanes": [], "missing_lanes_str": "",
-        "off_times": [], "session_meet": None,
+        "off_times": [], "button_a_times": [], "button_b_times": [],
+        "session_meet": None,
     }
 
     # --- Header row: Event, Heat, Race # (all at Y ~1997) ---
     header = sorted(
-        [(float(x), t) for x, y, t in glyphs if abs(float(y) - 1997) < 50],
+        [(float(x), t) for x, y, t, _ in glyphs if abs(float(y) - 1997) < 50],
         key=lambda g: g[0]
     )
     vals = [t for _, t in header if t not in ("Event:", "Heat:", "Race #")]
@@ -164,18 +171,18 @@ def parse_cts_file(filepath):
 
     # --- Session/meet string (Y ~1775) ---
     sess = sorted(
-        [(float(x), t) for x, y, t in glyphs if abs(float(y) - 1775) < 50],
+        [(float(x), t) for x, y, t, _ in glyphs if abs(float(y) - 1775) < 50],
         key=lambda g: g[0]
     )
     if sess:
         result["session_meet"] = sess[0][1]
 
     # --- Start time (label "Start Time:" then value at same Y) ---
-    for x, y, t in glyphs:
+    for x, y, t, _ in glyphs:
         if "Start Time:" in t:
             sy = float(y)
             candidates = sorted(
-                [(float(cx), ct) for cx, cy, ct in glyphs
+                [(float(cx), ct) for cx, cy, ct, _i in glyphs
                  if abs(float(cy) - sy) < 20 and ct != "Start Time:"],
                 key=lambda g: g[0]
             )
@@ -206,22 +213,20 @@ def parse_cts_file(filepath):
 
     lane_labels = [
         (float(x), float(y), int(re.search(r"\d+", t).group()))
-        for x, y, t in glyphs if re.match(r"Lane \d+$", t)
+        for x, y, t, _ in glyphs if re.match(r"Lane \d+$", t)
     ]
 
     active = None
 
     # --- Primary: By Lane table ---
     by_lane_glyph = next(
-        ((float(x), float(y)) for x, y, t in glyphs if t == "By Lane"), None
+        ((float(x), float(y)) for x, y, t, _ in glyphs if t == "By Lane"), None
     )
     if by_lane_glyph and lane_labels:
         by_lane_x, by_lane_y = by_lane_glyph
         lane_header_y = lane_labels[0][1]
-        # 2-digit lane+place entries sit left of the By Lane header, between
-        # the By Lane label Y and the lane header row Y
         by_lane_entries = [
-            t for x, y, t in glyphs
+            t for x, y, t, _ in glyphs
             if re.match(r"^\d{2}$", t)
             and float(x) < by_lane_x
             and by_lane_y < float(y) < lane_header_y
@@ -237,7 +242,7 @@ def parse_cts_file(filepath):
         lane_header_y = lane_labels[0][1]
         TIME_RE = re.compile(r"^\d+:\d{2}\.\d{2}$|^\d+\.\d{2}$")
         timing_below = [
-            float(x) for x, y, t in glyphs
+            float(x) for x, y, t, _ in glyphs
             if float(y) > lane_header_y and TIME_RE.match(t)
         ]
         if timing_below:
@@ -254,18 +259,109 @@ def parse_cts_file(filepath):
     result["missing_lanes"]     = [l for l in range(1, 9) if l not in active]
     result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
 
-    # --- Off Times: label "Off. Time" then concatenated times at same Y ---
-    for x, y, t in glyphs:
+    # --- Shared helper: decode a concatenated timing glyph into an 8-element
+    #     per-lane list using the Indices advance widths.
+    #
+    #     Each time value ends with a large advance width that encodes how many
+    #     lane columns to skip before the next value. We calibrate one lane width
+    #     from the Off. Time glyph (consecutive, one value per active lane) then
+    #     use that unit to decode Button A/B lane spacing.
+    # ---
+    TIME_RE = re.compile(r"\d+:\d{2}\.\d{2}|\d+\.\d{2}")
+    lane_header_xs = sorted(lx for lx, ly, ln in lane_labels) if lane_labels else []
+
+    def _group_advances(combined, indices_str):
+        """Sum advance widths per time value group from an Indices string."""
+        if not indices_str:
+            return []
+        times = TIME_RE.findall(combined)
+        pairs = indices_str.split(";")
+        char_advances = []
+        for pair in pairs:
+            parts = pair.split(",")
+            char_advances.append(int(parts[1]) if len(parts) >= 2 else 0)
+        groups = []
+        char_pos = 0
+        for t in times:
+            groups.append(sum(char_advances[char_pos:char_pos + len(t)]))
+            char_pos += len(t)
+        return groups
+
+    def _times_to_lanes_by_indices(glyph_x, combined, indices_str, lane_unit):
+        """Decode per-lane times using Indices advance widths.
+        lane_unit: advance width corresponding to exactly one lane column."""
+        times = TIME_RE.findall(combined)
+        if not times or not lane_header_xs:
+            return [None] * 8
+
+        start_lane_idx = min(range(len(lane_header_xs)),
+                             key=lambda i: abs(lane_header_xs[i] - glyph_x))
+
+        if not indices_str or len(times) == 1 or not lane_unit:
+            per_lane = [None] * 8
+            if start_lane_idx < 8:
+                per_lane[start_lane_idx] = times[0]
+            return per_lane
+
+        groups = _group_advances(combined, indices_str)
+        per_lane = [None] * 8
+        lane_idx = start_lane_idx
+        for i, (t, adv) in enumerate(zip(times, groups)):
+            if lane_idx < 8:
+                per_lane[lane_idx] = t
+            if i < len(times) - 1:
+                lane_idx += max(1, round(adv / lane_unit))
+
+        return per_lane
+
+    # --- Off Times + calibrate lane_unit ---
+    # Off. Time values are always consecutive one-per-active-lane, so the
+    # average group advance gives us the exact 1-lane width in index units.
+    lane_unit = None
+    for x, y, t, _ in glyphs:
         if t == "Off. Time":
             oty = float(y)
             candidates = sorted(
-                [(float(cx), ct) for cx, cy, ct in glyphs
+                [(float(cx), ct, ci) for cx, cy, ct, ci in glyphs
                  if abs(float(cy) - oty) < 20 and ct != "Off. Time"],
                 key=lambda g: g[0]
             )
             if candidates:
-                combined = candidates[0][1]
-                result["off_times"] = re.findall(r"\d+:\d{2}\.\d{2}", combined)
+                off_combined, off_indices = candidates[0][1], candidates[0][2]
+                groups = _group_advances(off_combined, off_indices)
+                # All groups except the last represent one lane advance each
+                if len(groups) > 1:
+                    lane_unit = sum(groups[:-1]) / (len(groups) - 1)
+                result["off_times"] = _times_to_lanes_by_indices(
+                    candidates[0][0], off_combined, off_indices, lane_unit)
+            break
+
+    # --- Button A ---
+    for x, y, t, _ in glyphs:
+        if t == "Button A":
+            bay = float(y)
+            candidates = sorted(
+                [(float(cx), ct, ci) for cx, cy, ct, ci in glyphs
+                 if abs(float(cy) - bay) < 20 and ct != "Button A"],
+                key=lambda g: g[0]
+            )
+            if candidates:
+                result["button_a_times"] = _times_to_lanes_by_indices(
+                    candidates[0][0], candidates[0][1], candidates[0][2], lane_unit)
+            break
+
+    # --- Button B ---
+    for x, y, t, _ in glyphs:
+        if t == "Button B":
+            bby = float(y)
+            candidates = sorted(
+                [(float(cx), ct, ci) for cx, cy, ct, ci in glyphs
+                 if abs(float(cy) - bby) < 20 and ct != "Button B"],
+                key=lambda g: g[0]
+            )
+            if candidates:
+                result["button_b_times"] = _times_to_lanes_by_indices(
+                    candidates[0][0], candidates[0][1], candidates[0][2], lane_unit)
             break
 
     if result["event_id"] is None or result["cts_race_num"] is None:
