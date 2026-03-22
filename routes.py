@@ -1060,17 +1060,24 @@ def api_dashboard():
         for row in rows:
             row["is_current_p1"] = False
             row["is_current_p2"] = False
+        def _heat_matches(row, companion):
+            ch = str(companion["heat"]).upper()
+            if str(row.get("event_id")) != str(companion["event_id"]):
+                return False
+            if str(row.get("heat")) == str(companion["heat"]):
+                return True
+            # Letter heat: match heat_label exactly or by last word
+            # e.g. Companion "A" matches heat_label "A" or "13-14 A" or "15 & Over A"
+            hl = (row.get("heat_label") or "").strip().upper()
+            return hl == ch or hl.endswith(" " + ch)
+
         if _companion_p1:
             for row in rows:
-                if (str(row.get("event_id")) == str(_companion_p1["event_id"])
-                        and (str(row.get("heat")) == str(_companion_p1["heat"])
-                             or str(row.get("heat_label") or "") == str(_companion_p1["heat"]))):
+                if _heat_matches(row, _companion_p1):
                     row["is_current_p1"] = True
         if _companion_p2:
             for row in rows:
-                if (str(row.get("event_id")) == str(_companion_p2["event_id"])
-                        and (str(row.get("heat")) == str(_companion_p2["heat"])
-                             or str(row.get("heat_label") or "") == str(_companion_p2["heat"]))):
+                if _heat_matches(row, _companion_p2):
                     row["is_current_p2"] = True
 
     # Compute next heat per pool — first unrun row after each pool's current in schedule order
