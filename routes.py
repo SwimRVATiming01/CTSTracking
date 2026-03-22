@@ -547,6 +547,7 @@ function loadDashboard() {
       const cp2 = data.companion_p2;
       const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + heatDisplay(r.heat, r.heat_label) : '\u2014';
       const fmtCompanion = (matched, raw) => {
+        if (matched && raw) return 'Ev ' + raw.event_id + '  Heat ' + raw.heat;
         if (matched) return fmtHeat(matched);
         if (raw) return '(no match: Ev ' + raw.event_id + ' Heat ' + raw.heat + ')';
         return '\u2014';
