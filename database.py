@@ -106,6 +106,9 @@ CREATE TABLE IF NOT EXISTS race_log (
     off_times               TEXT,
     button_a_times          TEXT,
     button_b_times          TEXT,
+    dolphin_watch_a         TEXT,
+    dolphin_watch_b         TEXT,
+    dolphin_watch_c         TEXT,
     ingested_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -116,6 +119,7 @@ CREATE TABLE IF NOT EXISTS pending_dolphin (
     file_time         TEXT NOT NULL,
     source_machine    TEXT NOT NULL,
     filename          TEXT NOT NULL,
+    raw_data          TEXT,
     arrived_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -163,6 +167,10 @@ def init_db():
             "ALTER TABLE pending_dolphin ADD COLUMN dolphin_dataset INTEGER",
             "ALTER TABLE race_log ADD COLUMN button_a_times TEXT",
             "ALTER TABLE race_log ADD COLUMN button_b_times TEXT",
+            "ALTER TABLE race_log ADD COLUMN dolphin_watch_a TEXT",
+            "ALTER TABLE race_log ADD COLUMN dolphin_watch_b TEXT",
+            "ALTER TABLE race_log ADD COLUMN dolphin_watch_c TEXT",
+            "ALTER TABLE pending_dolphin ADD COLUMN raw_data TEXT",
         ]:
             try:
                 conn.execute(sql)
@@ -400,6 +408,11 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             for sql in [
                 "ALTER TABLE race_log ADD COLUMN dolphin_dataset INTEGER",
                 "ALTER TABLE pending_dolphin ADD COLUMN dolphin_dataset INTEGER",
+                "ALTER TABLE race_log ADD COLUMN button_a_times TEXT",
+                "ALTER TABLE race_log ADD COLUMN button_b_times TEXT",
+                "ALTER TABLE race_log ADD COLUMN dolphin_watch_a TEXT",
+                "ALTER TABLE race_log ADD COLUMN dolphin_watch_b TEXT",
+                "ALTER TABLE race_log ADD COLUMN dolphin_watch_c TEXT",
             ]:
                 try:
                     conn.execute(sql)

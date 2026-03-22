@@ -18,7 +18,7 @@ from database import (
     get_active_meet, get_conn, get_write_conn, _log_ingestion,
     wipe_database, create_meet, export_race_log_csv, snapshot_db,
 )
-from parsers import parse_cts_filename, parse_dolphin_filename, parse_cts_file
+from parsers import parse_cts_filename, parse_dolphin_filename, parse_cts_file, parse_dolphin_file
 
 log = logging.getLogger("cts_tracker")
 
@@ -305,17 +305,20 @@ def ingest_dolphin_file(filepath):
         _log_ingestion(filename, "dolphin", fn.get("machine_id"), fn.get("file_time"), "error", msg)
         return {"status": "error", "message": msg}
 
+    dolphin_data = parse_dolphin_file(filepath)
+
     matched_id = None
     if fn["file_time"]:
         matched_id = _match_dolphin_to_cts(
-            fn["dolphin_race_num"], fn.get("dolphin_dataset"), fn["machine_id"], fn["file_time"], filename
+            fn["dolphin_race_num"], fn.get("dolphin_dataset"), fn["machine_id"],
+            fn["file_time"], filename, dolphin_data
         )
 
     if matched_id:
         _log_ingestion(filename, "dolphin", fn.get("machine_id"), fn.get("file_time"), "matched")
         return {"status": "matched", "race_log_id": matched_id}
     else:
-        _add_pending_dolphin(fn, filename)
+        _add_pending_dolphin(fn, filename, dolphin_data)
         _log_ingestion(filename, "dolphin", fn.get("machine_id"), fn.get("file_time"), "pending", "No CTS match found")
         return {"status": "pending", "message": "Saved to pending"}
 
@@ -482,16 +485,17 @@ def _add_pending_cts(cts_data, fn, filename):
         )
 
 
-def _add_pending_dolphin(fn, filename):
+def _add_pending_dolphin(fn, filename, dolphin_data=None):
     ft = fn["file_time"].isoformat() if fn["file_time"] else None
+    raw = json.dumps(dolphin_data) if dolphin_data else None
     with get_write_conn() as conn:
         conn.execute(
-            "INSERT INTO pending_dolphin (dolphin_race_num,dolphin_dataset,file_time,source_machine,filename) VALUES (?,?,?,?,?)",
-            (fn["dolphin_race_num"], fn.get("dolphin_dataset"), ft, fn.get("machine_id"), filename)
+            "INSERT INTO pending_dolphin (dolphin_race_num,dolphin_dataset,file_time,source_machine,filename,raw_data) VALUES (?,?,?,?,?,?)",
+            (fn["dolphin_race_num"], fn.get("dolphin_dataset"), ft, fn.get("machine_id"), filename, raw)
         )
 
 
-def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_time, filename):
+def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_time, filename, dolphin_data=None):
     """Find closest unmatched CTS race_log entry within the time window."""
     window = timedelta(seconds=config.DOLPHIN_MATCH_WINDOW_SECONDS)
     low  = (file_time - window).isoformat()
@@ -510,13 +514,18 @@ def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_ti
 
     delta = abs((file_time - datetime.fromisoformat(row["cts_file_time"])).total_seconds())
     ft = file_time.isoformat()
+    wa = json.dumps(dolphin_data["watch_a"]) if dolphin_data else None
+    wb = json.dumps(dolphin_data["watch_b"]) if dolphin_data else None
+    wc = json.dumps(dolphin_data["watch_c"]) if dolphin_data else None
 
     with get_write_conn() as conn:
         conn.execute(
             """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
-               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1
+               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
+               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?
                WHERE id=?""",
-            (dolphin_race_num, dolphin_dataset, ft, machine_id, filename, delta, row["id"])
+            (dolphin_race_num, dolphin_dataset, ft, machine_id, filename, delta,
+             wa, wb, wc, row["id"])
         )
     log.info(f"Dolphin #{dolphin_race_num} (dataset={dolphin_dataset}) matched to race_log id={row['id']} (Δ{delta:.1f}s)")
     return row["id"]
@@ -544,13 +553,21 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
 
     delta = abs((cts_file_time - datetime.fromisoformat(pending["file_time"])).total_seconds())
 
+    raw = pending["raw_data"] if "raw_data" in pending.keys() else None
+    dolphin_data = json.loads(raw) if raw else None
+    wa = json.dumps(dolphin_data["watch_a"]) if dolphin_data else None
+    wb = json.dumps(dolphin_data["watch_b"]) if dolphin_data else None
+    wc = json.dumps(dolphin_data["watch_c"]) if dolphin_data else None
+
     with get_write_conn() as conn:
         conn.execute(
             """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
-               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1
+               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
+               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?
                WHERE id=?""",
             (pending["dolphin_race_num"], pending["dolphin_dataset"], pending["file_time"],
-             pending["source_machine"], pending["filename"], delta, race_log_id)
+             pending["source_machine"], pending["filename"], delta,
+             wa, wb, wc, race_log_id)
         )
         conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))
 

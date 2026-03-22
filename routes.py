@@ -14,6 +14,7 @@ from flask import Flask, jsonify, render_template_string, request, abort
 
 import config
 import csv
+import json
 
 from database import (
     get_active_meet, get_all_meets, create_meet, set_active_meet,
@@ -136,6 +137,16 @@ DASHBOARD_HTML = """
     /* History view */
     #btn-history { background: #0f3460; color: #a0c4ff; }
     #btn-history.active { background: #a0c4ff; color: #0d1117; }
+
+    /* Trends view */
+    #btn-trends { background: #0f3460; color: #a0c4ff; }
+    #btn-trends.active { background: #a0c4ff; color: #0d1117; }
+    .trends-table { border-collapse: collapse; }
+    .trends-table th { background: #0f3460; color: #a0c4ff; padding: 5px 7px; text-align: center;
+                       font-size: 10px; white-space: nowrap; position: sticky; top: 0; z-index: 10; }
+    .trends-table td { padding: 4px 7px; border-bottom: 1px solid #1e2a4a; text-align: center;
+                       font-size: 12px; white-space: nowrap; }
+    .trends-table td.left { text-align: left; }
     .history-toolbar { padding: 8px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .history-select { background: #0f3460; border: 1px solid #1e2a4a; color: #e0e0e0;
                       font-family: monospace; font-size: 12px; padding: 4px 8px;
@@ -251,6 +262,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-log"      onclick="setView('log')">Full Log</button>
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
+    <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
@@ -261,7 +273,7 @@ DASHBOARD_HTML = """
   <table>
     <thead>
       <tr>
-        <th class="left">Event</th>
+        <th>Event</th>
         <th>Heat</th>
         <th>Projected</th>
         <th>Late(+)<br>Early(-)</th>
@@ -311,7 +323,7 @@ DASHBOARD_HTML = """
   <table>
     <thead>
       <tr>
-        <th class="left">Event</th>
+        <th>Event</th>
         <th>Heat</th>
         <th>Projected</th>
         <th>Late(+)<br>Early(-)</th>
@@ -326,6 +338,38 @@ DASHBOARD_HTML = """
     </thead>
     <tbody id="history-table"></tbody>
   </table>
+</div>
+
+<!-- Trends View -->
+<div id="trends-view" style="display:none;flex-direction:column;height:calc(100vh - var(--header-height, 0px));overflow:hidden;">
+  <div style="flex-shrink:0;padding:8px 14px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #1e2a4a;flex-wrap:wrap;background:#1a1a2e;">
+    <span style="font-size:10px;color:#888;letter-spacing:1px;">LEGEND</span>
+    <span style="font-size:11px;display:flex;align-items:center;gap:5px;">
+      <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#44bb44;"></span> Recorded
+    </span>
+    <span style="font-size:11px;display:flex;align-items:center;gap:5px;">
+      <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#ff4444;"></span> Missed
+    </span>
+    <span style="font-size:11px;display:flex;align-items:center;gap:5px;">
+      <span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#2a2a2a;"></span> Lane not active
+    </span>
+  </div>
+  <div style="flex:1;overflow:auto;">
+  <table class="trends-table" style="width:100%">
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th>Heat</th>
+        <th>Touchpad<br><span style="font-size:9px;color:#888">lanes 1&ndash;8</span></th>
+        <th>Button 1<br><span style="font-size:9px;color:#888">lanes 1&ndash;8</span></th>
+        <th>Button 2<br><span style="font-size:9px;color:#888">lanes 1&ndash;8</span></th>
+        <th>Watch A<br><span style="font-size:9px;color:#888">lanes 1&ndash;8</span></th>
+        <th>Watch B<br><span style="font-size:9px;color:#888">lanes 1&ndash;8</span></th>
+      </tr>
+    </thead>
+    <tbody id="trends-table"></tbody>
+  </table>
+  </div>
 </div>
 
 <!-- Full Log View -->
@@ -356,13 +400,16 @@ function setView(v) {
   document.getElementById('log-view').style.display      = v === 'log'      ? '' : 'none';
   document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
+  document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
+  document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
+  if (v === 'trends')  loadTrends();
 }
 setView('schedule');  // set initial active state
 
@@ -533,7 +580,7 @@ function renderRow(row) {
   // Event — hide duplicate
   const showEv = row.event_id !== lastEventId;
   lastEventId = row.event_id;
-  const evCell = '<td class="left">' + (showEv ? row.event_id : '') + '</td>';
+  const evCell = '<td>' + (showEv ? row.event_id : '') + '</td>';
 
   // Delta
   let delta = '\u2014';
@@ -849,12 +896,71 @@ function exportHistoryCSV() {
 }
 
 // ---------------------------------------------------------------------------
+// TRENDS
+// ---------------------------------------------------------------------------
+function loadTrends() {
+  fetch('/api/trends')
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        document.getElementById('trends-table').innerHTML =
+          '<tr><td colspan="13" style="color:#888;padding:14px">' + data.error + '</td></tr>';
+        return;
+      }
+
+      // Summary cell: one square per lane — green=present, red=missed, gray=inactive
+      function summaryCell(active, arr) {
+        const squares = [1,2,3,4,5,6,7,8].map(lane => {
+          if (!active.includes(lane))
+            return '<span style="display:inline-block;width:9px;height:9px;margin:0 1px;border-radius:2px;background:#2a2a2a;"></span>';
+          const idx = lane - 1;
+          const missed = idx < arr.length && arr[idx] === null;
+          const color = missed ? '#ff4444' : '#44bb44';
+          return '<span style="display:inline-block;width:9px;height:9px;margin:0 1px;border-radius:2px;background:' + color + ';"></span>';
+        }).join('');
+        return '<td style="white-space:nowrap">' + squares + '</td>';
+      }
+
+      let lastEvent = null;
+      document.getElementById('trends-table').innerHTML =
+        (data.rows || []).map(row => {
+          const active  = row.active  || [];
+          const off     = row.off     || [];
+          const btnA    = row.btn_a   || [];
+          const btnB    = row.btn_b   || [];
+          const watchA  = row.watch_a || [];
+          const watchB  = row.watch_b || [];
+          const watchC  = row.watch_c || [];
+          const hasDolphin = row.has_dolphin;
+          const showEv = row.event_id !== lastEvent;
+          lastEvent = row.event_id;
+
+          function watchCell(active, arr, hasData) {
+            if (!hasData) return '<td style="color:#333">\u2014</td>';
+            return summaryCell(active, arr);
+          }
+
+          return '<tr>' +
+            '<td>' + (showEv ? row.event_id : '') + '</td>' +
+            '<td>' + (row.heat || '\u2014') + '</td>' +
+            summaryCell(active, off) +
+            summaryCell(active, btnA) +
+            summaryCell(active, btnB) +
+            watchCell(active, watchA, hasDolphin) +
+            watchCell(active, watchB, hasDolphin) +
+            '</tr>';
+        }).join('');
+    });
+}
+
+// ---------------------------------------------------------------------------
 // POLL
 // ---------------------------------------------------------------------------
 function poll() {
   checkPendingSchedule();
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
+  else if (currentView === 'trends') loadTrends();
   // history view is not auto-refreshed — it's read-only static data
 }
 
@@ -1257,6 +1363,62 @@ def api_export_race_log():
         abort(400, "No active meet")
     path = export_race_log_csv(meet["meet_id"])
     return jsonify({"exported": path})
+
+
+# ---------------------------------------------------------------------------
+# TRENDS
+# ---------------------------------------------------------------------------
+
+@app.route("/api/trends")
+def api_trends():
+    meet = get_active_meet()
+    if not meet:
+        return jsonify({"error": "No active meet", "rows": []})
+
+    from database import get_conn
+    with get_conn() as conn:
+        race_rows = conn.execute(
+            """SELECT r.event_id, r.heat, r.active_lanes, r.off_times,
+                      r.button_a_times, r.button_b_times,
+                      r.dolphin_watch_a, r.dolphin_watch_b, r.dolphin_watch_c,
+                      r.dolphin_filename IS NOT NULL AS has_dolphin,
+                      s.heat_order
+               FROM race_log r
+               LEFT JOIN schedule s
+                 ON s.meet_id = r.meet_id
+                 AND s.event_id = r.event_id
+                 AND s.heat = r.heat
+               WHERE r.meet_id = ? AND r.active_lanes IS NOT NULL
+               ORDER BY COALESCE(s.heat_order, r.id) ASC""",
+            (meet["meet_id"],)
+        ).fetchall()
+
+    def parse_arr(raw):
+        try:
+            return json.loads(raw) if raw else [None] * 8
+        except Exception:
+            return [None] * 8
+
+    rows = []
+    for row in race_rows:
+        try:
+            active = [int(x) for x in row["active_lanes"].split(",") if x.strip()]
+        except Exception:
+            active = []
+        rows.append({
+            "event_id":   row["event_id"],
+            "heat":       row["heat"],
+            "active":     active,
+            "off":        parse_arr(row["off_times"]),
+            "btn_a":      parse_arr(row["button_a_times"]),
+            "btn_b":      parse_arr(row["button_b_times"]),
+            "has_dolphin": bool(row["has_dolphin"]),
+            "watch_a":    parse_arr(row["dolphin_watch_a"]),
+            "watch_b":    parse_arr(row["dolphin_watch_b"]),
+            "watch_c":    parse_arr(row["dolphin_watch_c"]),
+        })
+
+    return jsonify({"meet": meet, "rows": rows})
 
 
 # ---------------------------------------------------------------------------

@@ -90,6 +90,60 @@ def parse_dolphin_filename(filename):
 
 
 # ===========================================================================
+# DOLPHIN FILE PARSER
+# ===========================================================================
+
+def parse_dolphin_file(filepath):
+    """
+    Parse a Dolphin .do3 file (semicolon-separated text).
+
+    Each data line: lane;watch_a;watch_b;watch_c
+    Empty fields indicate no time recorded for that watch on that lane.
+
+    Returns dict: watch_a, watch_b, watch_c — each an 8-element list,
+                  None where no time was recorded.
+    Returns None on file read error.
+    """
+    result = {
+        "watch_a": [None] * 8,
+        "watch_b": [None] * 8,
+        "watch_c": [None] * 8,
+    }
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception as e:
+        log.error(f"Could not read Dolphin file {filepath}: {e}")
+        return None
+
+    for line in lines:
+        parts = line.strip().split(";")
+        try:
+            lane = int(parts[0].strip())
+        except (ValueError, IndexError):
+            continue
+        if not (1 <= lane <= 8):
+            continue
+        idx = lane - 1
+
+        def _val(i):
+            if i < len(parts):
+                v = parts[i].strip()
+                return v if v else None
+            return None
+
+        result["watch_a"][idx] = _val(1)
+        result["watch_b"][idx] = _val(2)
+        result["watch_c"][idx] = _val(3)
+
+    log.info(
+        f"Dolphin parsed: watch_a={result['watch_a']} "
+        f"watch_b={result['watch_b']} watch_c={result['watch_c']}"
+    )
+    return result
+
+
+# ===========================================================================
 # CTS FILE PARSER
 # ===========================================================================
 
