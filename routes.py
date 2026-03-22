@@ -545,7 +545,7 @@ function loadDashboard() {
       const p2Next = rows.find(r => r.is_next_p2);
       const cp1 = data.companion_p1;
       const cp2 = data.companion_p2;
-      const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + r.heat : '\u2014';
+      const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + heatDisplay(r.heat, r.heat_label) : '\u2014';
       const fmtCompanion = (matched, raw) => {
         if (matched) return fmtHeat(matched);
         if (raw) return '(no match: Ev ' + raw.event_id + ' Heat ' + raw.heat + ')';
@@ -565,6 +565,14 @@ function loadDashboard() {
       document.getElementById('race-table').innerHTML =
         rows.map(row => renderRow(row)).join('');
     });
+}
+
+// Returns "3 · A" when heat_label ends with a final letter, otherwise just heat number.
+function heatDisplay(heat, heat_label) {
+  if (!heat_label) return heat;
+  const last = heat_label.trim().split(/\s+/).pop();
+  if (/^[A-Z]$/i.test(last)) return heat + ' \u00b7 ' + last.toUpperCase();
+  return heat;
 }
 
 function renderRow(row) {
@@ -621,7 +629,7 @@ function renderRow(row) {
 
   return '<tr class="' + cls + '">' +
     evCell +
-    '<td>' + row.heat + '</td>' +
+    '<td>' + heatDisplay(row.heat, row.heat_label) + '</td>' +
     '<td>' + (row.effective_start || '\u2014') + '</td>' +
     '<td>' + delta + '</td>' +
     lanes +
@@ -719,7 +727,7 @@ function renderReorderTable() {
       'ondragend="onDragEnd(event)">' +
       '<td><span class="drag-handle">&#9776;</span></td>' +
       '<td class="left">' + row.event_id + '</td>' +
-      '<td>' + row.heat + '</td>' +
+      '<td>' + heatDisplay(row.heat, row.heat_label) + '</td>' +
       '<td class="left">' + (row.event_name || '\u2014') + '</td>' +
       '<td>' + (row.projected || '\u2014') + '</td>' +
       '<td>' + (row.cts_race_num ?? '\u2014') + '</td>' +
@@ -868,7 +876,7 @@ function loadHistoryDashboard(meetId) {
             : '\u2014';
           return '<tr class="' + cls + '">' +
             '<td class="left">' + (showEv ? row.event_id : '') + '</td>' +
-            '<td>' + row.heat + '</td>' +
+            '<td>' + heatDisplay(row.heat, row.heat_label) + '</td>' +
             '<td>' + (row.effective_start || '\u2014') + '</td>' +
             '<td>' + delta + '</td>' +
             lanes + ctsCell + dolCell + datasetCell +
@@ -942,7 +950,7 @@ function loadTrends() {
 
           return '<tr>' +
             '<td>' + (showEv ? row.event_id : '') + '</td>' +
-            '<td>' + (row.heat || '\u2014') + '</td>' +
+            '<td>' + heatDisplay(row.heat || '\u2014', row.heat_label) + '</td>' +
             summaryCell(active, off) +
             summaryCell(active, btnA) +
             summaryCell(active, btnB) +
@@ -1389,7 +1397,7 @@ def api_trends():
                       r.button_a_times, r.button_b_times,
                       r.dolphin_watch_a, r.dolphin_watch_b, r.dolphin_watch_c,
                       r.dolphin_filename IS NOT NULL AS has_dolphin,
-                      s.heat_order
+                      s.heat_label, s.heat_order
                FROM race_log r
                LEFT JOIN schedule s
                  ON s.meet_id = r.meet_id
@@ -1415,6 +1423,7 @@ def api_trends():
         rows.append({
             "event_id":   row["event_id"],
             "heat":       row["heat"],
+            "heat_label": row["heat_label"],
             "active":     active,
             "off":        parse_arr(row["off_times"]),
             "btn_a":      parse_arr(row["button_a_times"]),
