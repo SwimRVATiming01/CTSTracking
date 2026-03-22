@@ -1068,25 +1068,44 @@ def api_dashboard():
         for row in rows:
             row["is_current_p1"] = False
             row["is_current_p2"] = False
-        def _heat_matches(row, companion):
-            ch = str(companion["heat"]).upper()
-            if str(row.get("event_id")) != str(companion["event_id"]):
-                return False
-            if str(row.get("heat")) == str(companion["heat"]):
-                return True
-            # Letter heat: match heat_label exactly or by last word
-            # e.g. Companion "A" matches heat_label "A" or "13-14 A" or "15 & Over A"
-            hl = (row.get("heat_label") or "").strip().upper()
-            return hl == ch or hl.endswith(" " + ch)
+
+        def _resolve_companion(companion):
+            """Return the single schedule row that best matches companion {event_id, heat}.
+            Priority:
+              1. Exact numeric heat match
+              2. Ordinal letter: A=last heat of event, B=second-to-last, etc.
+            Only one row is ever returned so a single heat is highlighted.
+            """
+            ev = str(companion["event_id"])
+            ch = str(companion["heat"])
+            # All rows for this event, ordered by heat_order (schedule sequence)
+            event_rows = sorted(
+                [r for r in rows if str(r.get("event_id")) == ev],
+                key=lambda r: r.get("heat_order") or 0
+            )
+            if not event_rows:
+                return None
+            # 1. Exact numeric match
+            for r in event_rows:
+                if str(r.get("heat")) == ch:
+                    return r
+            # 2. Letter ordinal: A=last, B=second-to-last, C=third-to-last
+            import re as _re
+            if _re.match(r'^[A-Za-z]$', ch):
+                pos = ord(ch.upper()) - ord('A')   # A→0, B→1, C→2
+                idx = len(event_rows) - 1 - pos
+                if 0 <= idx < len(event_rows):
+                    return event_rows[idx]
+            return None
 
         if _companion_p1:
-            for row in rows:
-                if _heat_matches(row, _companion_p1):
-                    row["is_current_p1"] = True
+            match = _resolve_companion(_companion_p1)
+            if match:
+                match["is_current_p1"] = True
         if _companion_p2:
-            for row in rows:
-                if _heat_matches(row, _companion_p2):
-                    row["is_current_p2"] = True
+            match = _resolve_companion(_companion_p2)
+            if match:
+                match["is_current_p2"] = True
 
     # Compute next heat per pool — first unrun row after each pool's current in schedule order
     ordered = sorted(rows, key=lambda r: r["heat_order"])
