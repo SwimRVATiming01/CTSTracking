@@ -8,3 +8,7 @@ __pycache__/
 *.log
 backups/
 snapshots/
+
+# PyInstaller build artifacts
+build/
+tmp_check.js

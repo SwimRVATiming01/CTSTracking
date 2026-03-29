@@ -243,13 +243,13 @@ class ForwardHandler(FileSystemEventHandler):
 # FOLDER WATCHING WITH RETRY
 # ===========================================================================
 
-def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10):
+def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10, max_attempts=3):
     """
     Try to add a folder to the watchdog observer.
-    If the folder doesn't exist yet, keep retrying in the background.
+    If the folder doesn't exist, retries up to max_attempts times then gives up.
     """
     def attempt():
-        while True:
+        for attempt_num in range(1, max_attempts + 1):
             if os.path.isdir(path):
                 try:
                     observer.schedule(handler, path, recursive=False)
@@ -258,8 +258,17 @@ def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10):
                 except Exception as e:
                     log.warning(f"Could not watch {label}: {e} — retrying in {retry_interval}s")
             else:
-                log.warning(f"{label} not found: {path} — retrying in {retry_interval}s")
-            time.sleep(retry_interval)
+                log.warning(f"{label} not found: {path} — attempt {attempt_num}/{max_attempts}")
+            if attempt_num < max_attempts:
+                time.sleep(retry_interval)
+
+        log.error(f"Giving up on {label}: {path} — folder not found after {max_attempts} attempts")
+        warn_popup(
+            f"Could not find the {label} folder after {max_attempts} attempts:\n\n"
+            f"  {path}\n\n"
+            f"This folder will NOT be watched this session.\n"
+            f"Restart the client once the folder is available."
+        )
 
     threading.Thread(target=attempt, daemon=True).start()
 

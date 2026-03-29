@@ -1423,7 +1423,7 @@ def api_trends():
                  AND s.event_id = r.event_id
                  AND s.heat = r.heat
                WHERE r.meet_id = ? AND r.active_lanes IS NOT NULL
-               ORDER BY COALESCE(s.heat_order, r.id) ASC""",
+               ORDER BY r.id ASC""",
             (meet["meet_id"],)
         ).fetchall()
 
