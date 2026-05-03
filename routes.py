@@ -181,6 +181,40 @@ DASHBOARD_HTML = """
                         padding:4px 7px; width:100%; }
     .modal-form .full-width { grid-column: 1 / -1; }
     .modal-form input:focus { outline:1px solid #a0c4ff; }
+
+    /* OBS View */
+    #btn-obs { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
+    #btn-obs.active { background:#c0a0ff; color:#0d1117; }
+    #obs-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    .obs-panels { display:flex; gap:12px; flex-wrap:wrap; }
+    .obs-panel { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; min-width:300px; flex:1; }
+    .obs-panel-title { font-size:13px; font-weight:bold; color:#c0a0ff; margin-bottom:10px; }
+    .obs-section { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; }
+    .obs-section-title { font-size:10px; color:#888; letter-spacing:1px; margin-bottom:9px; }
+    .obs-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:7px; }
+    .obs-row:last-child { margin-bottom:0; }
+    .obs-row label { color:#a0c4ff; font-size:11px; white-space:nowrap; min-width:60px; }
+    .obs-input { background:#0f3460; border:1px solid #1e2a4a; border-radius:3px;
+                 color:#e0e0e0; font-family:monospace; font-size:12px; padding:4px 7px; }
+    .obs-input:focus { outline:1px solid #c0a0ff; }
+    .obs-input-wide { width:280px; }
+    .obs-input-mid  { width:160px; }
+    .obs-input-sm   { width:110px; }
+    .obs-btn { border:none; padding:4px 11px; border-radius:4px; cursor:pointer;
+               font-family:monospace; font-size:11px; background:#0f3460; color:#a0c4ff; }
+    .obs-btn:hover { background:#a0c4ff; color:#0d1117; }
+    .obs-btn-start { background:#1a4a1a; color:#6bff6b; font-size:12px; padding:6px 16px; }
+    .obs-btn-start:hover { background:#6bff6b; color:#0d1117; }
+    .obs-btn-danger { background:#3a1a1a; color:#ff6b6b; }
+    .obs-btn-danger:hover { background:#ff6b6b; color:#0d1117; }
+    .obs-status-row { display:flex; gap:16px; margin-top:9px; font-size:11px; }
+    .obs-indicator { display:flex; align-items:center; gap:5px; }
+    .obs-dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .obs-dot.ok   { background:#6bff6b; }
+    .obs-dot.warn { background:#ffd700; }
+    .obs-dot.off  { background:#444; }
+    .obs-dot.live { background:#e94560; }
+    .obs-msg { font-size:11px; min-height:15px; margin-top:6px; }
   </style>
 </head>
 <body>
@@ -263,6 +297,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
+    <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
@@ -372,6 +407,111 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- OBS View -->
+<div class="container" id="obs-view" style="display:none">
+  <div style="padding:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+
+    <!-- OBS 1 panel -->
+    <div class="obs-panel">
+      <div class="obs-panel-title">OBS 1 &nbsp;<span style="color:#555;font-size:10px;font-weight:normal">port 4455</span></div>
+
+      <!-- Connection -->
+      <div class="obs-section-title" style="margin-top:4px;">CONNECTION</div>
+      <div class="obs-row">
+        <label>Host</label>
+        <input id="obs1-host" class="obs-input obs-input-mid" type="text" value="172.16.0.119" placeholder="172.16.0.119">
+        <label>Password</label>
+        <input id="obs1-pass" class="obs-input obs-input-sm" type="password" placeholder="optional">
+        <button class="obs-btn" onclick="obsSaveConfig(1)">Save</button>
+      </div>
+      <div class="obs-status-row">
+        <div class="obs-indicator"><span class="obs-dot off" id="obs1-conn-dot"></span><span id="obs1-conn-label" style="color:#888">--</span></div>
+        <div class="obs-indicator"><span class="obs-dot off" id="obs1-stream-dot"></span><span id="obs1-stream-label" style="color:#888">--</span></div>
+      </div>
+
+      <!-- Stream settings -->
+      <div class="obs-section-title" style="margin-top:12px;">STREAM SETTINGS</div>
+      <div class="obs-row">
+        <label>RTMP URL</label>
+        <input id="obs1-url" class="obs-input obs-input-wide" type="text" placeholder="rtmp://live.example.com/live">
+      </div>
+      <div class="obs-row">
+        <label>Stream Key</label>
+        <input id="obs1-key" class="obs-input obs-input-wide" type="password" placeholder="stream key">
+        <button class="obs-btn" onclick="obsApplySettings(1)">Apply</button>
+      </div>
+      <div class="obs-msg" id="obs1-settings-msg"></div>
+
+      <!-- Schedule / start -->
+      <div class="obs-section-title" style="margin-top:12px;">STREAM START</div>
+      <div class="obs-row">
+        <label>Event time</label>
+        <input id="obs1-sched-time" class="obs-input" type="text" placeholder="HH:MM (24hr)">
+        <label style="margin-left:4px;">Start</label>
+        <input id="obs1-offset" class="obs-input" type="number" value="10" min="0" max="120" style="width:52px;text-align:center;">
+        <label>min early</label>
+        <button class="obs-btn" onclick="obsSetSchedule(1)">Set</button>
+        <button class="obs-btn obs-btn-danger" id="obs1-cancel-btn" onclick="obsCancelSchedule(1)" style="display:none">Cancel</button>
+      </div>
+      <div style="font-size:11px;color:#ffd700;min-height:15px;margin:3px 0;" id="obs1-sched-label"></div>
+      <div class="obs-row">
+        <button class="obs-btn obs-btn-start" onclick="obsStartNow(1)">&#9654; Start Now</button>
+      </div>
+      <div class="obs-msg" id="obs1-start-msg"></div>
+    </div>
+
+    <!-- OBS 2 panel -->
+    <div class="obs-panel">
+      <div class="obs-panel-title">OBS 2 &nbsp;<span style="color:#555;font-size:10px;font-weight:normal">port 4456</span></div>
+
+      <!-- Connection -->
+      <div class="obs-section-title" style="margin-top:4px;">CONNECTION</div>
+      <div class="obs-row">
+        <label>Host</label>
+        <input id="obs2-host" class="obs-input obs-input-mid" type="text" value="172.16.0.119" placeholder="172.16.0.119">
+        <label>Password</label>
+        <input id="obs2-pass" class="obs-input obs-input-sm" type="password" placeholder="optional">
+        <button class="obs-btn" onclick="obsSaveConfig(2)">Save</button>
+      </div>
+      <div class="obs-status-row">
+        <div class="obs-indicator"><span class="obs-dot off" id="obs2-conn-dot"></span><span id="obs2-conn-label" style="color:#888">--</span></div>
+        <div class="obs-indicator"><span class="obs-dot off" id="obs2-stream-dot"></span><span id="obs2-stream-label" style="color:#888">--</span></div>
+      </div>
+
+      <!-- Stream settings -->
+      <div class="obs-section-title" style="margin-top:12px;">STREAM SETTINGS</div>
+      <div class="obs-row">
+        <label>RTMP URL</label>
+        <input id="obs2-url" class="obs-input obs-input-wide" type="text" placeholder="rtmp://live.example.com/live">
+      </div>
+      <div class="obs-row">
+        <label>Stream Key</label>
+        <input id="obs2-key" class="obs-input obs-input-wide" type="password" placeholder="stream key">
+        <button class="obs-btn" onclick="obsApplySettings(2)">Apply</button>
+      </div>
+      <div class="obs-msg" id="obs2-settings-msg"></div>
+
+      <!-- Schedule / start -->
+      <div class="obs-section-title" style="margin-top:12px;">STREAM START</div>
+      <div class="obs-row">
+        <label>Event time</label>
+        <input id="obs2-sched-time" class="obs-input" type="text" placeholder="HH:MM (24hr)">
+        <label style="margin-left:4px;">Start</label>
+        <input id="obs2-offset" class="obs-input" type="number" value="10" min="0" max="120" style="width:52px;text-align:center;">
+        <label>min early</label>
+        <button class="obs-btn" onclick="obsSetSchedule(2)">Set</button>
+        <button class="obs-btn obs-btn-danger" id="obs2-cancel-btn" onclick="obsCancelSchedule(2)" style="display:none">Cancel</button>
+      </div>
+      <div style="font-size:11px;color:#ffd700;min-height:15px;margin:3px 0;" id="obs2-sched-label"></div>
+      <div class="obs-row">
+        <button class="obs-btn obs-btn-start" onclick="obsStartNow(2)">&#9654; Start Now</button>
+      </div>
+      <div class="obs-msg" id="obs2-start-msg"></div>
+    </div>
+
+  </div>
+</div>
+
 <!-- Full Log View -->
 <div class="container" id="log-view" style="display:none">
   <table>
@@ -401,15 +541,18 @@ function setView(v) {
   document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
+  document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
+  document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
+  if (v === 'obs')     loadObsStatus();
 }
 setView('schedule');  // set initial active state
 
@@ -962,6 +1105,180 @@ function loadTrends() {
 }
 
 // ---------------------------------------------------------------------------
+// OBS CONTROL
+// ---------------------------------------------------------------------------
+
+function loadObsStatus() {
+  fetch('/api/obs/status')
+    .then(r => r.json())
+    .then(data => {
+      _renderObsInstance(1, data.obs1, data.configs && data.configs['1']);
+      _renderObsInstance(2, data.obs2, data.configs && data.configs['2']);
+      _renderObsSched(1, data.scheduled && data.scheduled['1']);
+      _renderObsSched(2, data.scheduled && data.scheduled['2']);
+      _renderObsSettingsAt(1, data.settings_at && data.settings_at['1']);
+      _renderObsSettingsAt(2, data.settings_at && data.settings_at['2']);
+    })
+    .catch(() => {});
+}
+
+function _renderObsInstance(num, status, cfg) {
+  const connDot     = document.getElementById('obs' + num + '-conn-dot');
+  const connLabel   = document.getElementById('obs' + num + '-conn-label');
+  const streamDot   = document.getElementById('obs' + num + '-stream-dot');
+  const streamLabel = document.getElementById('obs' + num + '-stream-label');
+
+  // Populate host from server config (only if user hasn't typed in the field)
+  if (cfg) {
+    const hostEl = document.getElementById('obs' + num + '-host');
+    if (hostEl && !hostEl.dataset.edited) hostEl.value = cfg.host || 'localhost';
+  }
+
+  if (!status || !status.connected) {
+    connDot.className     = 'obs-dot off';
+    connLabel.textContent = status && status.error
+      ? 'Offline \u2014 ' + status.error.substring(0, 50)
+      : 'Offline';
+    connLabel.style.color = '#888';
+    streamDot.className     = 'obs-dot off';
+    streamLabel.textContent = '--';
+    streamLabel.style.color = '#888';
+    return;
+  }
+
+  connDot.className     = 'obs-dot ok';
+  connLabel.textContent = 'Connected' + (status.obs_version ? '  v' + status.obs_version : '');
+  connLabel.style.color = '#6bff6b';
+
+  if (status.streaming) {
+    streamDot.className     = 'obs-dot live';
+    streamLabel.textContent = 'LIVE';
+    streamLabel.style.color = '#e94560';
+  } else {
+    streamDot.className     = 'obs-dot warn';
+    streamLabel.textContent = 'Idle';
+    streamLabel.style.color = '#ffd700';
+  }
+}
+
+function _renderObsSettingsAt(num, t) {
+  const msg = document.getElementById('obs' + num + '-settings-msg');
+  if (!msg) return;
+  // Only update the timestamp line; don't clobber a freshly-set status message
+  if (t && !msg._userMsg) {
+    msg.textContent = 'Last applied: ' + t;
+    msg.style.color = '#555';
+  }
+}
+
+function _renderObsSched(num, fireTime) {
+  const label     = document.getElementById('obs' + num + '-sched-label');
+  const cancelBtn = document.getElementById('obs' + num + '-cancel-btn');
+  if (fireTime) {
+    label.textContent   = 'Stream starts at ' + fireTime;
+    cancelBtn.style.display = '';
+  } else {
+    label.textContent   = '';
+    cancelBtn.style.display = 'none';
+  }
+}
+
+function obsSaveConfig(num) {
+  const host = document.getElementById('obs' + num + '-host').value.trim();
+  const pass = document.getElementById('obs' + num + '-pass').value;
+  const body = {};
+  body['obs' + num] = { host: host, password: pass };
+  fetch('/api/obs/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(() => loadObsStatus());
+}
+
+// Mark host fields as user-edited so auto-populate never overwrites them
+['obs1-host','obs2-host'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', function() { el.dataset.edited = '1'; });
+});
+
+function obsApplySettings(num) {
+  const url = document.getElementById('obs' + num + '-url').value.trim();
+  const key = document.getElementById('obs' + num + '-key').value.trim();
+  const msg = document.getElementById('obs' + num + '-settings-msg');
+  if (!url) { msg.textContent = 'RTMP URL is required.'; msg.style.color = '#ff6b6b'; return; }
+  msg.textContent = 'Applying...'; msg.style.color = '#888';
+  msg._userMsg = true;
+  fetch('/api/obs/stream_settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ instance: num, url: url, key: key })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      msg.textContent = 'Settings applied.'; msg.style.color = '#6bff6b';
+    } else {
+      msg.textContent = data.error || 'Failed.'; msg.style.color = '#ff6b6b';
+    }
+    setTimeout(() => { msg._userMsg = false; loadObsStatus(); }, 3000);
+  })
+  .catch(() => {
+    msg.textContent = 'Request failed.'; msg.style.color = '#ff6b6b';
+    setTimeout(() => { msg._userMsg = false; }, 3000);
+  });
+}
+
+function obsStartNow(num) {
+  const msg = document.getElementById('obs' + num + '-start-msg');
+  msg.textContent = 'Switching to Intro...'; msg.style.color = '#888';
+  fetch('/api/obs/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ instance: num })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      msg.textContent = 'Stream started.'; msg.style.color = '#6bff6b';
+    } else {
+      msg.textContent = data.error || 'Failed.'; msg.style.color = '#ff6b6b';
+    }
+    loadObsStatus();
+  })
+  .catch(() => { msg.textContent = 'Request failed.'; msg.style.color = '#ff6b6b'; });
+}
+
+function obsSetSchedule(num) {
+  const t      = document.getElementById('obs' + num + '-sched-time').value;
+  const offset = parseInt(document.getElementById('obs' + num + '-offset').value, 10) || 10;
+  const label  = document.getElementById('obs' + num + '-sched-label');
+  if (!t) { label.textContent = 'Enter a time first.'; label.style.color = '#ff6b6b'; return; }
+  fetch('/api/obs/schedule', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ instance: num, time: t, offset_minutes: offset })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      label.textContent = 'Error: ' + data.error; label.style.color = '#ff6b6b';
+    } else {
+      label.style.color = '#ffd700';
+      loadObsStatus();
+    }
+  })
+  .catch(() => { label.textContent = 'Request failed.'; label.style.color = '#ff6b6b'; });
+}
+
+function obsCancelSchedule(num) {
+  fetch('/api/obs/schedule', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ instance: num })
+  }).then(() => loadObsStatus());
+}
+
+// ---------------------------------------------------------------------------
 // POLL
 // ---------------------------------------------------------------------------
 function poll() {
@@ -969,6 +1286,7 @@ function poll() {
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
+  else if (currentView === 'obs') loadObsStatus();
   // history view is not auto-refreshed — it's read-only static data
 }
 
@@ -1534,3 +1852,89 @@ def api_snapshot_export(filename, meet_id):
             writer.writeheader()
             writer.writerows(rows)
     return jsonify({"exported": export_path})
+
+
+# ---------------------------------------------------------------------------
+# OBS CONTROL
+# ---------------------------------------------------------------------------
+
+import obs_control
+
+
+@app.route("/api/obs/status")
+def api_obs_status():
+    """Return connection + stream status for both OBS instances."""
+    return jsonify({
+        "obs1":        obs_control.get_status(1),
+        "obs2":        obs_control.get_status(2),
+        "configs":     {str(k): v for k, v in obs_control.get_configs().items()},
+        "scheduled":   {str(k): v for k, v in obs_control.get_scheduled_times().items()},
+        "settings_at": {str(k): v for k, v in obs_control.get_settings_applied_at().items()},
+    })
+
+
+@app.route("/api/obs/config", methods=["POST"])
+def api_obs_config():
+    """Update host/password for one or both OBS instances."""
+    data = request.json or {}
+    for i in [1, 2]:
+        key = f"obs{i}"
+        if key in data:
+            obs_control.update_config(i, **{
+                k: v for k, v in data[key].items()
+                if k in ("host", "port", "password")
+            })
+    return jsonify({"ok": True})
+
+
+@app.route("/api/obs/stream_settings", methods=["POST"])
+def api_obs_stream_settings():
+    """Push RTMP URL and stream key to one OBS instance."""
+    data     = request.json or {}
+    instance = int(data.get("instance", 0))
+    url      = data.get("url", "").strip()
+    key      = data.get("key", "").strip()
+    if instance not in (1, 2):
+        return jsonify({"error": "instance must be 1 or 2"}), 400
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+    return jsonify(obs_control.set_stream_settings(instance, url, key))
+
+
+@app.route("/api/obs/start", methods=["POST"])
+def api_obs_start():
+    """Switch to Intro scene, wait 5s, then start streaming on one OBS instance."""
+    data     = request.json or {}
+    instance = int(data.get("instance", 0))
+    if instance not in (1, 2):
+        return jsonify({"error": "instance must be 1 or 2"}), 400
+    return jsonify(obs_control.start_stream(instance))
+
+
+@app.route("/api/obs/schedule", methods=["POST"])
+def api_obs_schedule():
+    """Schedule one OBS instance to start streaming at a given time."""
+    data           = request.json or {}
+    instance       = int(data.get("instance", 0))
+    t              = data.get("time", "").strip()
+    offset_minutes = int(data.get("offset_minutes", 10))
+    if instance not in (1, 2):
+        return jsonify({"error": "instance must be 1 or 2"}), 400
+    if not t:
+        return jsonify({"error": "time is required"}), 400
+    try:
+        result = obs_control.schedule_stream_start(instance, t, offset_minutes)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/obs/schedule", methods=["DELETE"])
+def api_obs_cancel_schedule():
+    """Cancel a pending scheduled stream start for one OBS instance."""
+    data     = request.json or {}
+    instance = int(data.get("instance", 0))
+    if instance not in (1, 2):
+        return jsonify({"error": "instance must be 1 or 2"}), 400
+    obs_control.cancel_schedule(instance)
+    return jsonify({"cancelled": True})

@@ -278,6 +278,18 @@ def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10, 
 # ===========================================================================
 
 if __name__ == "__main__":
+    # Single-instance guard — create a named mutex; if it already exists another
+    # copy is running, so show a message and exit immediately.
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "CTSTrackerClient_SingleInstance")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            "CTS Tracker Client is already running on this machine.",
+            "CTS Tracker Client",
+            0x30,  # MB_ICONWARNING | MB_OK
+        )
+        sys.exit(0)
+
     log.info("=" * 50)
     log.info("CTS Tracker Client starting")
     log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
