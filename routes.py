@@ -4,6 +4,7 @@ routes.py - Flask app, dashboard HTML, and all API routes.
 
 import logging
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -37,6 +38,40 @@ app = Flask(__name__)
 # Companion-controlled current heat overrides (None = use auto-detection)
 _companion_p1 = None  # {"event_id": str, "heat": str}
 _companion_p2 = None
+
+# ---------------------------------------------------------------------------
+# CLIENT HEARTBEAT STATE
+# ---------------------------------------------------------------------------
+
+DISCOVERY_PORT   = 47200
+HEARTBEAT_STALE  = 60   # seconds before a client is considered offline
+
+_clients      = {}   # machine_id -> last heartbeat dict
+_clients_lock = threading.Lock()
+
+
+def _udp_discovery_listener():
+    """
+    Listen for UDP broadcast discovery packets from clients.
+    Responds with the Flask port so clients can find the server dynamically.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", DISCOVERY_PORT))
+        log.info(f"UDP discovery listener on port {DISCOVERY_PORT}")
+        while True:
+            try:
+                data, addr = sock.recvfrom(1024)
+                if data == b"CTS_TRACKER_DISCOVER":
+                    sock.sendto(f"CTS_TRACKER_HERE:{config.FLASK_PORT}".encode(), addr)
+            except Exception as e:
+                log.warning(f"UDP discovery error: {e}")
+    except Exception as e:
+        log.error(f"UDP discovery listener failed: {e}")
+
+
+threading.Thread(target=_udp_discovery_listener, daemon=True).start()
 
 
 # ===========================================================================
@@ -182,6 +217,26 @@ DASHBOARD_HTML = """
     .modal-form .full-width { grid-column: 1 / -1; }
     .modal-form input:focus { outline:1px solid #a0c4ff; }
 
+    /* Clients View */
+    #btn-clients { background:#0f3460; color:#a0c4ff; }
+    #btn-clients.active { background:#a0c4ff; color:#0d1117; }
+    #clients-view { padding:14px; }
+    .clients-table { border-collapse:collapse; width:100%; }
+    .clients-table th { background:#0f3460; color:#a0c4ff; padding:6px 10px;
+                        text-align:left; font-size:10px; white-space:nowrap;
+                        position:sticky; top:0; z-index:10; }
+    .clients-table td { padding:5px 10px; border-bottom:1px solid #1e2a4a;
+                        font-size:12px; white-space:nowrap; }
+    .clients-table tr:hover td { background:#222; }
+    .c-dot { display:inline-block; width:9px; height:9px; border-radius:50%;
+             margin-right:5px; flex-shrink:0; }
+    .c-dot.ok      { background:#6bff6b; }
+    .c-dot.warn    { background:#ff6b6b; }
+    .c-dot.unknown { background:#444; }
+    .c-machine { color:#e0e0e0; font-weight:bold; }
+    .c-since { color:#555; font-size:10px; }
+    .c-scripts { color:#a0c4ff; font-size:11px; }
+
     /* OBS View */
     #btn-obs { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
     #btn-obs.active { background:#c0a0ff; color:#0d1117; }
@@ -297,6 +352,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
+    <button class="view-btn" id="btn-clients"  onclick="setView('clients')">Clients</button>
     <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
@@ -404,6 +460,30 @@ DASHBOARD_HTML = """
     </thead>
     <tbody id="trends-table"></tbody>
   </table>
+  </div>
+</div>
+
+<!-- Clients View -->
+<div class="container" id="clients-view" style="display:none">
+  <div style="padding:14px;">
+    <table class="clients-table">
+      <thead>
+        <tr>
+          <th>Machine</th>
+          <th>Status</th>
+          <th>Last Seen</th>
+          <th>AHK Scripts</th>
+          <th>Vicreo</th>
+          <th>Network Share</th>
+          <th>CTSDolphin</th>
+          <th>CTS Folder</th>
+        </tr>
+      </thead>
+      <tbody id="clients-table"></tbody>
+    </table>
+    <div id="clients-empty" style="color:#555;font-size:12px;padding:14px;display:none">
+      No clients have reported in yet.
+    </div>
   </div>
 </div>
 
@@ -542,17 +622,20 @@ function setView(v) {
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
   document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
+  document.getElementById('clients-view').style.display  = v === 'clients'  ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
   document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
+  document.getElementById('btn-clients').classList.toggle('active', v === 'clients');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
   if (v === 'obs')     loadObsStatus();
+  if (v === 'clients') loadClients();
 }
 setView('schedule');  // set initial active state
 
@@ -1105,6 +1188,50 @@ function loadTrends() {
 }
 
 // ---------------------------------------------------------------------------
+// CLIENTS
+// ---------------------------------------------------------------------------
+
+function loadClients() {
+  fetch('/api/clients')
+    .then(r => r.json())
+    .then(data => {
+      const rows  = data.clients || [];
+      const tbody = document.getElementById('clients-table');
+      const empty = document.getElementById('clients-empty');
+      if (!rows.length) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        return;
+      }
+      empty.style.display = 'none';
+      tbody.innerHTML = rows.map(c => {
+        const online   = c.online;
+        const connDot  = '<span class="c-dot ' + (online ? 'ok' : 'warn') + '"></span>';
+        const status   = connDot + (online ? 'Online' : 'Offline');
+        const since    = c.last_seen ? '<span class="c-since">' + c.last_seen + '</span>' : '—';
+        const scripts  = c.ahk_scripts && c.ahk_scripts.length
+          ? '<span class="c-scripts">' + c.ahk_scripts.join(', ') + '</span>'
+          : '<span style="color:#555">—</span>';
+        function dot(val) {
+          if (val === null || val === undefined) return '<span class="c-dot unknown"></span>—';
+          return '<span class="c-dot ' + (val ? 'ok' : 'warn') + '"></span>' + (val ? 'OK' : 'No');
+        }
+        return '<tr>' +
+          '<td class="c-machine">' + c.machine_id + '</td>' +
+          '<td>' + status + '</td>' +
+          '<td>' + since + '</td>' +
+          '<td>' + scripts + '</td>' +
+          '<td>' + dot(c.vicreo_running) + '</td>' +
+          '<td>' + dot(c.share_ok) + '</td>' +
+          '<td>' + dot(c.dolphin_ok) + '</td>' +
+          '<td>' + dot(c.cts_ok) + '</td>' +
+          '</tr>';
+      }).join('');
+    })
+    .catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
 // OBS CONTROL
 // ---------------------------------------------------------------------------
 
@@ -1286,7 +1413,8 @@ function poll() {
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
-  else if (currentView === 'obs') loadObsStatus();
+  else if (currentView === 'obs')     loadObsStatus();
+  else if (currentView === 'clients') loadClients();
   // history view is not auto-refreshed — it's read-only static data
 }
 
@@ -1852,6 +1980,53 @@ def api_snapshot_export(filename, meet_id):
             writer.writeheader()
             writer.writerows(rows)
     return jsonify({"exported": export_path})
+
+
+# ---------------------------------------------------------------------------
+# CLIENT HEARTBEAT
+# ---------------------------------------------------------------------------
+
+@app.route("/api/heartbeat", methods=["POST"])
+def api_heartbeat():
+    """Receive a status heartbeat from a client machine."""
+    data = request.json or {}
+    machine_id = data.get("machine_id")
+    if not machine_id:
+        return jsonify({"error": "machine_id required"}), 400
+    with _clients_lock:
+        _clients[machine_id] = {
+            "machine_id":     machine_id,
+            "last_seen":      datetime.now(),
+            "ahk_scripts":    data.get("ahk_scripts", []),
+            "vicreo_running": data.get("vicreo_running"),
+            "share_ok":       data.get("share_ok"),
+            "dolphin_ok":     data.get("dolphin_ok"),
+            "cts_ok":         data.get("cts_ok"),
+        }
+    return jsonify({"ok": True})
+
+
+@app.route("/api/clients")
+def api_clients():
+    """Return last known status for all clients."""
+    now = datetime.now()
+    with _clients_lock:
+        rows = []
+        for c in _clients.values():
+            age    = (now - c["last_seen"]).total_seconds()
+            online = age <= HEARTBEAT_STALE
+            rows.append({
+                "machine_id":     c["machine_id"],
+                "online":         online,
+                "last_seen":      c["last_seen"].strftime("%H:%M:%S"),
+                "ahk_scripts":    c["ahk_scripts"],
+                "vicreo_running": c["vicreo_running"],
+                "share_ok":       c["share_ok"],
+                "dolphin_ok":     c["dolphin_ok"],
+                "cts_ok":         c["cts_ok"],
+            })
+    rows.sort(key=lambda r: r["machine_id"])
+    return jsonify({"clients": rows})
 
 
 # ---------------------------------------------------------------------------

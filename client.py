@@ -18,13 +18,23 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import sys
 import time
 import threading
+import urllib.request
+import urllib.error
+import json
 from datetime import datetime
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
+try:
+    import psutil
+    _PSUTIL = True
+except ImportError:
+    _PSUTIL = False
 
 # ===========================================================================
 # CONFIGURATION
@@ -48,6 +58,11 @@ DEBOUNCE_SECONDS = 0.75
 # Retry logic if network share is temporarily unavailable
 RETRY_ATTEMPTS = 5
 RETRY_DELAY_SECONDS = 3
+
+# Heartbeat / discovery
+DISCOVERY_PORT     = 47200
+HEARTBEAT_INTERVAL = 30   # seconds between heartbeats
+DISCOVERY_TIMEOUT  = 3    # seconds to wait for server discovery response
 
 # ===========================================================================
 # LOGGING
@@ -174,6 +189,107 @@ def copy_to_server(src_path, dest_filename):
                     f"Check your network connection. The file was NOT forwarded."
                 )
                 return False
+
+
+# ===========================================================================
+# HEARTBEAT
+# ===========================================================================
+
+def _discover_server():
+    """
+    Broadcast on the LAN to find the CTS Tracker Flask server.
+    Returns (ip, port) tuple or None if no server responds.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(DISCOVERY_TIMEOUT)
+        sock.sendto(b"CTS_TRACKER_DISCOVER", ("255.255.255.255", DISCOVERY_PORT))
+        data, addr = sock.recvfrom(1024)
+        sock.close()
+        if data.startswith(b"CTS_TRACKER_HERE:"):
+            port = int(data.split(b":")[1])
+            return addr[0], port
+    except Exception:
+        pass
+    return None
+
+
+def _gather_status():
+    """Collect machine status for the heartbeat payload."""
+    ahk_scripts    = []
+    vicreo_running = None
+    share_ok       = None
+    dolphin_ok     = os.path.isdir(DOLPHIN_WATCH_FOLDER)
+    cts_ok         = os.path.isdir(CTS_WATCH_FOLDER)
+
+    if _PSUTIL:
+        try:
+            for proc in psutil.process_iter(["name", "cmdline"]):
+                name = (proc.info["name"] or "").lower()
+                if "autohotkey" in name:
+                    cmdline = proc.info["cmdline"] or []
+                    scripts = [os.path.basename(a) for a in cmdline if a.lower().endswith(".ahk")]
+                    ahk_scripts.extend(scripts)
+                if "vicreo" in name:
+                    vicreo_running = True
+            if vicreo_running is None:
+                vicreo_running = False
+        except Exception:
+            pass
+
+    # Write-access check on network share
+    try:
+        test_path = os.path.join(SERVER_WATCH_FOLDER, ".cts_hb_check")
+        with open(test_path, "w") as f:
+            f.write("ok")
+        os.remove(test_path)
+        share_ok = True
+    except Exception:
+        share_ok = False
+
+    return {
+        "machine_id":     MACHINE_ID,
+        "ahk_scripts":    ahk_scripts,
+        "vicreo_running": vicreo_running,
+        "share_ok":       share_ok,
+        "dolphin_ok":     dolphin_ok,
+        "cts_ok":         cts_ok,
+    }
+
+
+def _heartbeat_loop():
+    """
+    Background thread: discover the server via UDP broadcast, then send
+    a status heartbeat every HEARTBEAT_INTERVAL seconds.
+    Re-discovers if the server becomes unreachable.
+    """
+    server = None
+    while True:
+        if server is None:
+            log.info("Heartbeat: searching for CTS Tracker server...")
+            server = _discover_server()
+            if server:
+                log.info(f"Heartbeat: server found at {server[0]}:{server[1]}")
+            else:
+                log.debug("Heartbeat: server not found, retrying in 30s")
+                time.sleep(HEARTBEAT_INTERVAL)
+                continue
+
+        try:
+            payload = json.dumps(_gather_status()).encode()
+            url     = f"http://{server[0]}:{server[1]}/api/heartbeat"
+            req     = urllib.request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as e:
+            log.debug(f"Heartbeat failed: {e} — will re-discover")
+            server = None
+
+        time.sleep(HEARTBEAT_INTERVAL)
 
 
 # ===========================================================================
@@ -307,6 +423,8 @@ if __name__ == "__main__":
         )
         log.warning(f"Server watch folder not accessible: {SERVER_WATCH_FOLDER}")
         warn_popup(msg)
+
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
     handler = ForwardHandler()
     observer = Observer()
