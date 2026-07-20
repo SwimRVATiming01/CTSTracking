@@ -149,6 +149,16 @@ DASHBOARD_HTML = """
     tr.current-p2 td { background: #00b4ff !important; color: #0d1117 !important; }
     tr.heat-one td { background: #2b2b4d; color: #ffffff; }
 
+    /* Session divider — sticks below the table header as its section scrolls by.
+       Background/text match the column header (th) styling above. */
+    tr.session-divider td { background: #0f3460; color: #a0c4ff; font-weight: bold;
+        text-align: center; padding: 6px 10px; font-size: 14px;
+        border-bottom: 1px solid #1e2a4a; white-space: nowrap;
+        position: sticky; top: var(--thead-height, 24px); z-index: 9; }
+    .session-divider-inner { position: relative; }
+    .session-eta { position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+        text-align: left; font-weight: normal; }
+
     /* Lane cells — !important so they win over row highlight backgrounds */
     .lane-active  { background: #1a4a1a !important; color: #1a4a1a !important; font-weight: bold; border-radius: 3px; }
     .lane-empty   { background: #4a1a1a !important; color: #ff6b6b !important; border-radius: 3px; }
@@ -342,7 +352,6 @@ DASHBOARD_HTML = """
         <div class="pool-row">Current: <span id="p2-current">&#8212;</span></div>
         <div class="pool-row">Next: <span id="p2-next">&#8212;</span></div>
       </div>
-      <span class="status-pill" id="last-update">&#8212;</span>
     </div>
   </header>
   <nav>
@@ -362,7 +371,7 @@ DASHBOARD_HTML = """
 <!-- Schedule View -->
 <div class="container" id="schedule-view">
   <table>
-    <thead>
+    <thead id="schedule-thead">
       <tr>
         <th>Event</th>
         <th>Heat</th>
@@ -609,6 +618,26 @@ DASHBOARD_HTML = """
 <script>
 let currentView = 'schedule';
 let lastEventId = null;
+let lastSession = null;
+
+// Strips the redundant "Meet Program - " prefix MM exports carry on every
+// session label; falls back to the raw string for whole-meet exports where
+// stripping it would leave nothing (e.g. plain "Meet Program").
+function sessionLabel(s) {
+  if (!s) return '';
+  const stripped = s.replace(/^Meet Program\s*-?\s*/i, '').trim();
+  return stripped || s;
+}
+
+// Shared formatting for a final-heat ETA object ({time, avg_delta}) — used by
+// both the top summary bar and each per-session divider row.
+function etaColor(avgDelta) {
+  return avgDelta > 0 ? '#ff6b6b' : avgDelta < 0 ? '#6bff6b' : '#ffffff';
+}
+function etaText(eta) {
+  const sign = eta.avg_delta > 0 ? '+' : '';
+  return eta.time + '  (' + sign + eta.avg_delta + ' min)';
+}
 
 // ---------------------------------------------------------------------------
 // VIEW TOGGLE
@@ -752,14 +781,14 @@ function loadDashboard() {
       const eta = data.final_eta;
       const etaBar = document.getElementById('eta-bar');
       if (eta && eta.time) {
-        const sign = eta.avg_delta > 0 ? '+' : '';
-        etaBar.textContent =
-          'Final Heat Start: ' + eta.time + '  (' + sign + eta.avg_delta + ' min)';
-        etaBar.style.color = eta.avg_delta > 0 ? '#ff6b6b' : eta.avg_delta < 0 ? '#6bff6b' : '#ffffff';
+        etaBar.textContent = 'Final Heat Start: ' + etaText(eta);
+        etaBar.style.color = etaColor(eta.avg_delta);
         etaBar.classList.add('show');
       } else {
         etaBar.classList.remove('show');
       }
+
+      const sessionEtas = data.session_etas || {};
 
       // Pool status blocks
       const rows = data.rows || [];
@@ -771,6 +800,10 @@ function loadDashboard() {
       const p2Next = rows.find(r => r.is_next_p2);
       const cp1 = data.companion_p1;
       const cp2 = data.companion_p2;
+
+      const pool2Detected = cp2 || rows.some(r => r.pool === 2);
+      document.getElementById('block-p2').style.display = pool2Detected ? '' : 'none';
+
       const fmtHeat = r => r ? 'Ev ' + r.event_id + '  Heat ' + heatDisplay(r.heat, r.heat_label) : '\u2014';
       const fmtCompanion = (matched, raw) => {
         if (!raw) return '\u2014';
@@ -784,12 +817,24 @@ function loadDashboard() {
       document.getElementById('p2-current').textContent = fmtCompanion(p2Current, cp2);
       document.getElementById('p2-next').textContent    = fmtHeat(p2Next);
 
-      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
-
       // Render rows
       lastEventId = null;
+      lastSession = null;
       document.getElementById('race-table').innerHTML =
-        rows.map(row => renderRow(row)).join('');
+        rows.map(row => {
+          let html = '';
+          if (row.session !== lastSession) {
+            const sEta = sessionEtas[row.session];
+            const etaSpan = (sEta && sEta.time)
+              ? '<span class="session-eta" style="color:' + etaColor(sEta.avg_delta) + '">' +
+                'Final Heat: ' + etaText(sEta) + '</span>'
+              : '';
+            html += '<tr class="session-divider"><td colspan="16"><div class="session-divider-inner">' +
+              etaSpan + sessionLabel(row.session) + '</div></td></tr>';
+            lastSession = row.session;
+          }
+          return html + renderRow(row);
+        }).join('');
     });
 }
 
@@ -1421,6 +1466,8 @@ function poll() {
 function updateHeaderHeight() {
   const h = document.getElementById('sticky-top').offsetHeight;
   document.documentElement.style.setProperty('--header-height', h + 'px');
+  const thead = document.getElementById('schedule-thead');
+  if (thead) document.documentElement.style.setProperty('--thead-height', thead.offsetHeight + 'px');
 }
 updateHeaderHeight();
 window.addEventListener('resize', updateHeaderHeight);
@@ -1562,11 +1609,18 @@ def api_dashboard():
             if nxt:
                 nxt[next_key] = True
 
+    # Same ETA logic as the overall final_eta, scoped to each session's own rows
+    session_etas = {
+        sess: _compute_final_eta([r for r in rows if r["session"] == sess])
+        for sess in {r["session"] for r in rows}
+    }
+
     return jsonify({
         "meet":        meet,
         "rows":        rows,
         "pending":     get_pending_summary(),
         "final_eta":   _compute_final_eta(rows),
+        "session_etas": session_etas,
         "companion_p1": _companion_p1,
         "companion_p2": _companion_p2,
     })
