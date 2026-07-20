@@ -89,6 +89,46 @@ def parse_dolphin_filename(filename):
     return result
 
 
+def parse_gen_filename(filename):
+    """
+    Parse a Gen7 native .gen filename.
+
+    Format: {gen7_session}-{event}-{heat}{round}{race_num}.gen
+    e.g. 238-067-02F0276.gen -> gen7_session=238, event_id=67, heat=2, round=F, race_num=276
+
+    gen7_session is Gen7's own internal session/meet bookkeeping number — confirmed
+    unrelated to Meet Manager's session concept or the event itself; not used for
+    matching, just carried along for reference.
+    round: F=Final, P=Prelim, S=Semifinal.
+    race_num: unique per race *attempt* (not per event/heat) — a false start or
+    re-run gets a new race_num for the same event/heat, same role cts_race_num
+    plays for .oxps (last one wins).
+
+    Returns dict: gen7_session, event_id, heat, round, race_num, original_name.
+    event_id/heat here have leading zeros stripped to match how the schedule
+    table stores them (e.g. filename "067" -> "67"). The .gen file's own header
+    line is the authoritative source for event_id/heat/round used at ingestion —
+    this filename parse is a secondary cross-check plus the source of race_num,
+    which only exists in the filename.
+    """
+    result = {
+        "gen7_session": None, "event_id": None, "heat": None,
+        "round": None, "race_num": None, "original_name": filename,
+    }
+    stem = os.path.splitext(filename)[0]
+    m = re.match(r"^(\d+)-(\d+)-(\d+)([A-Za-z])(\d+)$", stem)
+    if not m:
+        log.warning(f".gen filename not in expected format: {filename}")
+        return result
+
+    result["gen7_session"] = m.group(1)
+    result["event_id"]     = str(int(m.group(2)))
+    result["heat"]          = str(int(m.group(3)))
+    result["round"]        = m.group(4).upper()
+    result["race_num"]     = int(m.group(5))
+    return result
+
+
 # ===========================================================================
 # DOLPHIN FILE PARSER
 # ===========================================================================
@@ -243,10 +283,13 @@ def parse_cts_file(filepath):
             if candidates:
                 raw = candidates[0][1].replace("(Manual Start)", "").strip()
                 result["start_time_raw"] = raw
-                m = re.search(r"(\d{1,2}:\d{2}:\d{2}\s*[AP]M)", raw)
+                m = re.search(r"(\d{1,2}:\d{2}:\d{2})\s*([AaPp][Mm])?", raw)
                 if m:
                     try:
-                        dt = datetime.strptime(m.group(1).strip(), "%I:%M:%S %p")
+                        if m.group(2):
+                            dt = datetime.strptime(f"{m.group(1)} {m.group(2).upper()}", "%I:%M:%S %p")
+                        else:
+                            dt = datetime.strptime(m.group(1), "%H:%M:%S")
                         result["cts_start_time"] = dt.strftime("%H:%M")
                     except ValueError:
                         pass
@@ -426,5 +469,113 @@ def parse_cts_file(filepath):
         f"CTS parsed: Event={result['event_id']} Heat={result['heat']} "
         f"Race#={result['cts_race_num']} Start={result['cts_start_time']} "
         f"Lanes={result['active_lanes']} Missing={result['missing_lanes_str']}"
+    )
+    return result
+
+
+# ===========================================================================
+# GEN7 NATIVE FILE PARSER
+# ===========================================================================
+
+def parse_gen_file(filepath):
+    """
+    Parse a Gen7 native .gen file (semicolon-delimited text, CRLF).
+
+    Header line (line 1): event;heat;touchpad_count;round;100;Gen7 Swimming;version
+      Field 4 is always "100" in every sample seen regardless of actual event
+      distance/type — meaning unknown, not event distance. Not used here.
+
+    Per-lane data lines (line 2 = lane 1, line 3 = lane 2, ... line 9 = lane 8;
+    lines beyond 9 are padding for pools with more than 8 lanes):
+      place;split_1;...;split_N;backup_A;backup_B;backup_C;reaction_time;(padding)
+      - place = finish place in this heat (NOT lane number — lane is the line
+        position). 0 = lane empty / no recorded time.
+      - N = touchpad_count from the header. split_N is the official/final time.
+      - backup_A/backup_B/backup_C are backups for the FINAL touch only, not
+        intermediate splits. backup_C is always empty at this facility (no C
+        buttons in use) but the slot is real, not a parsing gap.
+      - reaction_time (the trailing "+X.XX" value) = reaction time off the
+        blocks / backstroke-ledge takeoff reaction. Not currently stored.
+
+    Returns dict on success, None on unrecoverable error:
+      event_id, heat, round, touchpad_count,
+      active_lanes, missing_lanes, missing_lanes_str,
+      off_times, button_a_times, button_b_times — each an 8-element list
+      indexed by lane (index 0 = lane 1), None where no time was recorded.
+    """
+    try:
+        with open(filepath, newline="", encoding="utf-8-sig", errors="replace") as f:
+            lines = [line.rstrip("\r\n") for line in f]
+    except Exception as e:
+        log.error(f"Could not read .gen file {filepath}: {e}")
+        return None
+
+    if not lines or not lines[0].strip():
+        log.error(f"Empty .gen file: {filepath}")
+        return None
+
+    header = lines[0].split(";")
+    if len(header) < 5:
+        log.error(f"Malformed .gen header in {filepath}: {lines[0]!r}")
+        return None
+
+    event_id = header[0].strip()
+    heat = header[1].strip()
+    round_code = header[3].strip().upper()
+    try:
+        touchpad_count = int(header[2].strip())
+    except ValueError:
+        touchpad_count = None
+
+    result = {
+        "event_id": event_id, "heat": heat, "round": round_code,
+        "touchpad_count": touchpad_count,
+        "active_lanes": [], "missing_lanes": [], "missing_lanes_str": "",
+        "off_times": [None] * 8, "button_a_times": [None] * 8, "button_b_times": [None] * 8,
+    }
+
+    if not event_id or not heat:
+        log.warning(f"Could not parse essential fields from {filepath}: {result}")
+        return None
+
+    if touchpad_count is None:
+        log.warning(f"Could not parse touchpad count from .gen header in {filepath}: {lines[0]!r}")
+        return result
+
+    def _val(fields, i):
+        if 0 <= i < len(fields):
+            v = fields[i].strip()
+            return v if v else None
+        return None
+
+    active = []
+    for idx, line in enumerate(lines[1:9]):
+        fields = line.split(";")
+        place_raw = _val(fields, 0)
+        try:
+            place = int(place_raw) if place_raw else 0
+        except ValueError:
+            place = 0
+        if place == 0:
+            continue  # lane empty / no recorded time
+
+        lane_num = idx + 1
+        active.append(lane_num)
+
+        splits = fields[1:1 + touchpad_count]
+        rest = fields[1 + touchpad_count:]
+        result["off_times"][idx] = _val(splits, touchpad_count - 1)
+        result["button_a_times"][idx] = _val(rest, 0)
+        result["button_b_times"][idx] = _val(rest, 1)
+        # rest[2] = backup_C (always empty here), rest[3] = reaction_time — not stored
+
+    result["active_lanes"] = active
+    result["missing_lanes"] = [l for l in range(1, 9) if l not in active]
+    result["missing_lanes_str"] = ", ".join(str(l) for l in result["missing_lanes"])
+
+    log.info(
+        f".gen parsed: Event={result['event_id']} Heat={result['heat']} "
+        f"Round={result['round']} N={touchpad_count} "
+        f"Lanes={active} Missing={result['missing_lanes_str']}"
     )
     return result

@@ -40,6 +40,7 @@ SNAPSHOT_DIR = os.path.join(DATA_DIR, "snapshots")
 
 # File extensions the watchdog should react to
 CTS_EXTENSION      = ".oxps"
+GEN_EXTENSION      = ".gen"
 DOLPHIN_EXTENSION  = ".do3"
 SCHEDULE_EXTENSION = ".csv"
 

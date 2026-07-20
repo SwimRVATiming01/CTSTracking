@@ -11,7 +11,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 import config
-from ingestion import ingest_cts_file, ingest_dolphin_file, ingest_schedule_file
+from ingestion import ingest_cts_file, ingest_dolphin_file, ingest_gen_file, ingest_schedule_file
 
 log = logging.getLogger("cts_tracker")
 
@@ -70,6 +70,8 @@ class IngestHandler(FileSystemEventHandler):
         try:
             if ext == config.CTS_EXTENSION.lower():
                 result = ingest_cts_file(filepath)
+            elif ext == config.GEN_EXTENSION.lower():
+                result = ingest_gen_file(filepath)
             elif ext == config.DOLPHIN_EXTENSION.lower():
                 result = ingest_dolphin_file(filepath)
             elif ext == config.SCHEDULE_EXTENSION.lower() and from_schedule_dir:

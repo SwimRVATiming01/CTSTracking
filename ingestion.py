@@ -18,7 +18,10 @@ from database import (
     get_active_meet, get_conn, get_write_conn, _log_ingestion,
     wipe_database, create_meet, export_race_log_csv, snapshot_db,
 )
-from parsers import parse_cts_filename, parse_dolphin_filename, parse_cts_file, parse_dolphin_file
+from parsers import (
+    parse_cts_filename, parse_dolphin_filename, parse_cts_file, parse_dolphin_file,
+    parse_gen_filename, parse_gen_file,
+)
 
 log = logging.getLogger("cts_tracker")
 
@@ -81,7 +84,7 @@ def import_schedule(filepath, meet_id, session_override=None, append=False):
     heats = {}
 
     try:
-        with open(filepath, newline="", encoding="utf-8-sig") as f:
+        with open(filepath, newline="", encoding="utf-8-sig", errors="replace") as f:
             for line_num, row in enumerate(csv.reader(f), start=1):
                 while len(row) <= max(
                     config.MM_COL_SESSION, config.MM_COL_EVENT_FULL,
@@ -209,34 +212,45 @@ def _clean_meet_name(raw):
     return re.sub(r'\s*-\s*\d{1,2}/\d{1,2}/\d{4}\s+to\s+\d{1,2}/\d{1,2}/\d{4}\s*$', '', raw).strip()
 
 
-def _extract_meet_info_from_csv(filepath):
+def _extract_meet_info_from_csv(filepath, retries=5, delay=0.5):
     """
     Parse meet name, date and session from MM CSV without fully importing it.
+    Retries on PermissionError — Meet Manager or AV can still hold the file
+    locked in the moment right after the watchdog sees it created.
     Returns dict with meet_name, meet_date, session.
     """
     info = {"meet_name": None, "meet_date": None, "session": None}
-    try:
-        with open(filepath, newline="", encoding="utf-8-sig") as f:
-            for row in csv.reader(f):
-                while len(row) <= max(config.MM_COL_MEET_NAME, config.MM_COL_EXPORT_INFO, config.MM_COL_SESSION):
-                    row.append("")
-                meet_raw    = row[config.MM_COL_MEET_NAME].strip()
-                export_raw  = row[config.MM_COL_EXPORT_INFO].strip()
-                session_raw = row[config.MM_COL_SESSION].strip()
-                if meet_raw:
-                    info["meet_name"] = _clean_meet_name(meet_raw)
-                if session_raw:
-                    info["session"] = session_raw
-                m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", export_raw)
-                if m:
-                    try:
-                        info["meet_date"] = datetime.strptime(m.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
-                    except ValueError:
-                        pass
-                if all(info.values()):
-                    break
-    except Exception as e:
-        log.warning(f"Could not extract meet info from CSV: {e}")
+    for attempt in range(1, retries + 1):
+        try:
+            with open(filepath, newline="", encoding="utf-8-sig", errors="replace") as f:
+                for row in csv.reader(f):
+                    while len(row) <= max(config.MM_COL_MEET_NAME, config.MM_COL_EXPORT_INFO, config.MM_COL_SESSION):
+                        row.append("")
+                    meet_raw    = row[config.MM_COL_MEET_NAME].strip()
+                    export_raw  = row[config.MM_COL_EXPORT_INFO].strip()
+                    session_raw = row[config.MM_COL_SESSION].strip()
+                    if meet_raw:
+                        info["meet_name"] = _clean_meet_name(meet_raw)
+                    if session_raw:
+                        info["session"] = session_raw
+                    m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", export_raw)
+                    if m:
+                        try:
+                            info["meet_date"] = datetime.strptime(m.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
+                        except ValueError:
+                            pass
+                    if all(info.values()):
+                        break
+            return info
+        except PermissionError as e:
+            if attempt < retries:
+                log.warning(f"File locked, retrying in {delay}s ({attempt}/{retries}): {os.path.basename(filepath)}")
+                time.sleep(delay)
+            else:
+                log.warning(f"Could not extract meet info from CSV: {e}")
+        except Exception as e:
+            log.warning(f"Could not extract meet info from CSV: {e}")
+            return info
     return info
 
 
@@ -321,6 +335,60 @@ def ingest_dolphin_file(filepath):
         _add_pending_dolphin(fn, filename, dolphin_data)
         _log_ingestion(filename, "dolphin", fn.get("machine_id"), fn.get("file_time"), "pending", "No CTS match found")
         return {"status": "pending", "message": "Saved to pending"}
+
+
+def ingest_gen_file(filepath):
+    """
+    Full Gen7 native .gen ingestion pipeline.
+
+    Unlike .oxps/.do3, .gen files are written directly into the watch folder
+    by Gen7 itself (documented "Meet Management File Export" feature) — there
+    is no client.py relay step, so no embedded machine id and no filename
+    timestamp. file_time is taken from the file's own OS write time instead.
+
+    A 'gen' sourced race takes priority over any 'cts' (.oxps) race for the
+    same event/heat in the dashboard join (see get_race_dashboard) — both
+    watchers stay live in parallel during the .oxps -> .gen transition.
+    """
+    filename = os.path.basename(filepath)
+    _backup_raw_file(filepath, "gen")
+    fn = parse_gen_filename(filename)
+    gen_data = parse_gen_file(filepath)
+
+    if gen_data is None:
+        msg = "Failed to parse .gen file — check log for details"
+        _log_ingestion(filename, "gen", None, None, "error", msg)
+        return {"status": "error", "message": msg}
+
+    if fn.get("event_id") and fn.get("event_id") != gen_data.get("event_id"):
+        log.warning(
+            f".gen filename/header event mismatch in {filename}: "
+            f"filename={fn.get('event_id')} header={gen_data.get('event_id')}"
+        )
+    if fn.get("heat") and fn.get("heat") != gen_data.get("heat"):
+        log.warning(
+            f".gen filename/header heat mismatch in {filename}: "
+            f"filename={fn.get('heat')} header={gen_data.get('heat')}"
+        )
+
+    try:
+        file_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+    except OSError:
+        file_time = datetime.now()
+
+    race_num = fn.get("race_num")
+
+    active = get_active_meet()
+    if not active:
+        _add_pending_gen(gen_data, race_num, file_time, filename)
+        _log_ingestion(filename, "gen", None, file_time, "pending", "No active meet")
+        return {"status": "pending", "message": "No active meet"}
+
+    race_id = _write_race_log_from_gen(gen_data, race_num, file_time, active["meet_id"], filename)
+    matched = _attempt_dolphin_correlation(race_id, file_time)
+    status = "matched" if matched else "pending"
+    _log_ingestion(filename, "gen", None, file_time, status)
+    return {"status": status, "race_log_id": race_id, "dolphin_matched": matched}
 
 
 # ===========================================================================
@@ -482,6 +550,67 @@ def _add_pending_cts(cts_data, fn, filename):
                VALUES (?,?,?,?,?,?,?,?)""",
             (cts_data.get("cts_race_num"), cts_data.get("event_id"), cts_data.get("heat"),
              cts_data.get("cts_start_time"), ft, fn.get("machine_id"), filename, json.dumps(cts_data))
+        )
+
+
+def _estimate_gen_start_time(gen_data, file_time):
+    """
+    .gen files carry no embedded wall-clock start time (unlike .oxps's printed
+    "Start Time:"). Approximate one: Gen7 writes the file the moment the race
+    is saved and the timer reset (per the vendor manual), so working backwards
+    from that file time by the slowest recorded final time gives an estimate
+    of when the race actually started. Returns "HH:MM" or None if no lane has
+    a recorded final time to work back from.
+    """
+    if not file_time:
+        return None
+    final_times = []
+    for t in gen_data.get("off_times") or []:
+        if not t:
+            continue
+        try:
+            final_times.append(float(t))
+        except ValueError:
+            continue
+    if not final_times:
+        return None
+    start_dt = file_time - timedelta(seconds=max(final_times))
+    return start_dt.strftime("%H:%M")
+
+
+def _write_race_log_from_gen(gen_data, race_num, file_time, meet_id, filename):
+    ft = file_time.isoformat() if file_time else None
+    active_lanes_str = ",".join(str(l) for l in gen_data.get("active_lanes") or [])
+    cts_start_time = _estimate_gen_start_time(gen_data, file_time)
+    with get_write_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO race_log
+               (meet_id,event_id,heat,source,round,cts_race_num,cts_start_time,
+                cts_file_time,cts_filename,
+                active_lanes,missing_lanes,off_times,button_a_times,button_b_times)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (meet_id, gen_data.get("event_id"), gen_data.get("heat"), "gen", gen_data.get("round"),
+             race_num, cts_start_time,
+             ft, filename,
+             active_lanes_str,
+             gen_data.get("missing_lanes_str", ""),
+             json.dumps(gen_data.get("off_times") or []),
+             json.dumps(gen_data.get("button_a_times") or []),
+             json.dumps(gen_data.get("button_b_times") or []))
+        )
+        return cur.lastrowid
+
+
+def _add_pending_gen(gen_data, race_num, file_time, filename):
+    ft = file_time.isoformat() if file_time else None
+    cts_start_time = _estimate_gen_start_time(gen_data, file_time)
+    with get_write_conn() as conn:
+        conn.execute(
+            """INSERT INTO pending_cts
+               (source,cts_race_num,event_id,heat,cts_start_time,file_time,source_machine,filename,raw_data)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("gen", race_num, gen_data.get("event_id"), gen_data.get("heat"),
+             cts_start_time, ft, None, filename, json.dumps(gen_data))
         )
 
 

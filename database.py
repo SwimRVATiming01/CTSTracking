@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS race_log (
     session                 TEXT,
     event_id                TEXT,
     heat                    TEXT,
+    source                  TEXT NOT NULL DEFAULT 'cts',
+    round                   TEXT,
     cts_race_num            INTEGER,
     cts_start_time          TEXT,
     cts_file_time           TEXT,
@@ -125,6 +127,7 @@ CREATE TABLE IF NOT EXISTS pending_dolphin (
 
 CREATE TABLE IF NOT EXISTS pending_cts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT NOT NULL DEFAULT 'cts',
     cts_race_num    INTEGER,
     event_id        TEXT,
     heat            TEXT,
@@ -171,6 +174,9 @@ def init_db():
             "ALTER TABLE race_log ADD COLUMN dolphin_watch_b TEXT",
             "ALTER TABLE race_log ADD COLUMN dolphin_watch_c TEXT",
             "ALTER TABLE pending_dolphin ADD COLUMN raw_data TEXT",
+            "ALTER TABLE race_log ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
+            "ALTER TABLE race_log ADD COLUMN round TEXT",
+            "ALTER TABLE pending_cts ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
         ]:
             try:
                 conn.execute(sql)
@@ -338,7 +344,11 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
     """
     Main dashboard query. Schedule rows joined with race_log data.
 
-    - Only the highest CTS race number per event/heat is joined (last run wins)
+    - A 'gen' sourced race wins over any 'cts' (.oxps) race for the same event/heat,
+      regardless of race number — .gen is the preferred source wherever it's present.
+      Within a single source, the highest race number wins (last run wins, e.g. a
+      false-start re-run). This lets .gen and .oxps run in parallel indefinitely:
+      .gen covers a heat the moment it arrives, .oxps covers the gaps until then.
     - Adds pool assignment (1 or 2) based on CTS race number vs POOL2_THRESHOLD
     - Adds current_heat flag per pool (row with highest CTS num in that pool)
     - Adds cts_gap_flag and dolphin_gap_flag for sequence break detection
@@ -358,6 +368,8 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             s.override_start,
             s.override_start IS NOT NULL AS has_override,
             r.id AS race_log_id,
+            r.source,
+            r.round,
             r.cts_race_num,
             r.cts_start_time,
             r.cts_file_time,
@@ -386,11 +398,15 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             ON r.meet_id = s.meet_id
             AND r.event_id = s.event_id
             AND r.heat = s.heat
-            AND r.cts_race_num = (
-                SELECT MAX(cts_race_num) FROM race_log
-                WHERE meet_id = s.meet_id
-                AND event_id = s.event_id
-                AND heat = s.heat
+            AND r.id = (
+                SELECT id FROM race_log rl
+                WHERE rl.meet_id = s.meet_id
+                AND rl.event_id = s.event_id
+                AND rl.heat = s.heat
+                ORDER BY
+                    CASE WHEN rl.source = 'gen' THEN 0 ELSE 1 END,
+                    rl.cts_race_num DESC
+                LIMIT 1
             )
         WHERE s.meet_id=?
     """
@@ -413,6 +429,8 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                 "ALTER TABLE race_log ADD COLUMN dolphin_watch_a TEXT",
                 "ALTER TABLE race_log ADD COLUMN dolphin_watch_b TEXT",
                 "ALTER TABLE race_log ADD COLUMN dolphin_watch_c TEXT",
+                "ALTER TABLE race_log ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
+                "ALTER TABLE race_log ADD COLUMN round TEXT",
             ]:
                 try:
                     conn.execute(sql)
