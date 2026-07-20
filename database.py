@@ -544,6 +544,7 @@ def get_full_log(meet_id, db_path=None):
                LEFT JOIN race_log r
                    ON (
                        (i.file_type = 'cts'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
+                    OR (i.file_type = 'gen'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
                     OR (i.file_type = 'dolphin' AND r.dolphin_filename = i.filename AND r.meet_id = ?)
                    )
                ORDER BY i.ingested_at ASC"""
@@ -551,12 +552,12 @@ def get_full_log(meet_id, db_path=None):
         conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute(sql, (meet_id, meet_id)).fetchall()
+            rows = conn.execute(sql, (meet_id, meet_id, meet_id)).fetchall()
         finally:
             conn.close()
     else:
         with get_conn() as conn:
-            rows = conn.execute(sql, (meet_id, meet_id)).fetchall()
+            rows = conn.execute(sql, (meet_id, meet_id, meet_id)).fetchall()
     return [dict(r) for r in rows]
 
 

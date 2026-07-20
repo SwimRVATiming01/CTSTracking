@@ -923,9 +923,18 @@ function loadFullLog() {
           const time    = row.ingested_at ? row.ingested_at.substring(11, 19) : '\u2014';
           const type    = row.file_type ? row.file_type.toUpperCase() : '\u2014';
           const typeCls = row.file_type === 'cts' ? 'color:#a0c4ff' : row.file_type === 'dolphin' ? 'color:#ffd700' : '';
-          const status  = row.status === 'ok'
-            ? '<span style="color:#6bff6b">ok</span>'
-            : '<span style="color:#ff6b6b">' + (row.error_message || 'error') + '</span>';
+          let statusColor, statusText;
+          if (row.status === 'error') {
+            statusColor = '#ff6b6b';
+            statusText  = row.error_message || 'error';
+          } else if (row.status === 'pending' || row.status === 'queued') {
+            statusColor = '#ffd700';
+            statusText  = row.status;
+          } else {
+            statusColor = '#6bff6b';
+            statusText  = row.status || '—';
+          }
+          const status = '<span style="color:' + statusColor + '">' + statusText + '</span>';
           const fname   = row.filename ? row.filename.substring(0, 40) : '\u2014';
           return '<tr>' +
             '<td>' + time + '</td>' +
