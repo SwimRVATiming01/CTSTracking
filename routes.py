@@ -2291,6 +2291,11 @@ def api_companion_set_heat_p2():
     heat  = request.args.get("heat")
     if event is None or heat is None:
         return jsonify({"error": "Missing event or heat parameter"}), 400
+    if event == "$NA" or heat == "$NA":
+        # Bitfocus Companion's own "variable unresolved" sentinel — not a real
+        # heat, so ignore it rather than letting it force the Pool 2 block visible.
+        log.info(f"Companion P2 heat set ignored (unresolved $NA): Event={event} Heat={heat}")
+        return jsonify({"status": "ignored", "reason": "unresolved $NA"}), 200
     _companion_p2 = {"event_id": event, "heat": heat}
     log.info(f"Companion P2 heat set: Event={event} Heat={heat}")
     return jsonify({"status": "ok", "pool": 2, "event_id": event, "heat": heat})
