@@ -28,7 +28,7 @@ from database import (
 )
 from ingestion import (
     get_pending_schedule, approve_schedule, dismiss_pending_schedule,
-    ingest_schedule_file,
+    ingest_schedule_file, get_session_report_notice, dismiss_session_report_notice,
 )
 
 log = logging.getLogger("cts_tracker")
@@ -293,12 +293,27 @@ DASHBOARD_HTML = """
       <div><b>Meet:</b> <span id="modal-meet-name">&#8212;</span></div>
       <div><b>Date:</b> <span id="modal-meet-date">&#8212;</span></div>
       <div><b>File:</b> <span id="modal-filename">&#8212;</span></div>
+      <div><b>File age:</b> <span id="modal-file-age">&#8212;</span></div>
     </div>
     <p>How would you like to proceed?</p>
     <button class="modal-btn btn-scrub"   onclick="approveSchedule('scrub')">Scrub Race Data &amp; Import</button>
     <button class="modal-btn btn-keep"    onclick="approveSchedule('keep')">Keep Race Data &amp; Import</button>
     <button class="modal-btn btn-add"     onclick="approveSchedule('append')">Append to Schedule</button>
     <button class="modal-btn btn-dismiss" onclick="dismissSchedule()">Dismiss</button>
+  </div>
+</div>
+
+<!-- Session Report Notice Modal -->
+<div id="session-report-overlay" class="modal-overlay">
+  <div class="modal-box">
+    <h2 id="sr-title">&#x1F4CA; Session Report Ingested</h2>
+    <p id="sr-summary"></p>
+    <div class="meet-info">
+      <div><b>Meet:</b> <span id="sr-meet-name">&#8212;</span></div>
+      <div><b>File:</b> <span id="sr-filename">&#8212;</span></div>
+      <div><b>File age:</b> <span id="sr-file-age">&#8212;</span></div>
+    </div>
+    <button class="modal-btn btn-dismiss" onclick="dismissSessionReportNotice()">OK</button>
   </div>
 </div>
 
@@ -671,6 +686,28 @@ setView('schedule');  // set initial active state
 // ---------------------------------------------------------------------------
 // MODAL
 // ---------------------------------------------------------------------------
+function formatAge(sec) {
+  if (sec == null || isNaN(sec) || sec < 0) return '\u2014';
+  sec = Math.floor(sec);
+  if (sec < 60) return sec + 's ago';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + 'm ' + s + 's ago';
+  const h = Math.floor(m / 60), rm = m % 60;
+  return h + 'h ' + rm + 'm ago';
+}
+
+function startAgeTicker(fileMtime, elId) {
+  const update = () => {
+    const el = document.getElementById(elId);
+    if (el) el.textContent = fileMtime ? formatAge(Date.now() / 1000 - fileMtime) : '\u2014';
+  };
+  update();
+  return setInterval(update, 1000);
+}
+
+let scheduleAgeTimer = null;
+let sessionReportAgeTimer = null;
+
 function checkPendingSchedule() {
   fetch('/api/schedule/pending')
     .then(r => r.json())
@@ -679,8 +716,11 @@ function checkPendingSchedule() {
         document.getElementById('modal-meet-name').textContent = data.meet_name || '\u2014';
         document.getElementById('modal-meet-date').textContent = data.meet_date || '\u2014';
         document.getElementById('modal-filename').textContent  = data.filename  || '\u2014';
+        clearInterval(scheduleAgeTimer);
+        scheduleAgeTimer = startAgeTicker(data.file_mtime, 'modal-file-age');
         document.getElementById('modal-overlay').classList.add('show');
       } else {
+        clearInterval(scheduleAgeTimer);
         document.getElementById('modal-overlay').classList.remove('show');
       }
 
@@ -696,6 +736,7 @@ function approveSchedule(mode) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
   }).then(() => {
+    clearInterval(scheduleAgeTimer);
     document.getElementById('modal-overlay').classList.remove('show');
     loadDashboard();
   });
@@ -703,7 +744,66 @@ function approveSchedule(mode) {
 
 function dismissSchedule() {
   fetch('/api/schedule/dismiss', {method: 'POST'})
-    .then(() => document.getElementById('modal-overlay').classList.remove('show'));
+    .then(() => {
+      clearInterval(scheduleAgeTimer);
+      document.getElementById('modal-overlay').classList.remove('show');
+    });
+}
+
+// ---------------------------------------------------------------------------
+// SESSION REPORT NOTICE MODAL
+// ---------------------------------------------------------------------------
+function checkSessionReportNotice() {
+  fetch('/api/session_report/notice')
+    .then(r => r.json())
+    .then(data => {
+      // Defer to the schedule-approval modal if both are pending at once \u2014
+      // it needs a decision, this one is FYI only and can wait a poll cycle.
+      if (data && data.filename && document.getElementById('modal-overlay').classList.contains('show')) {
+        return;
+      }
+      if (data && data.filename) {
+        const titles = {
+          applied:       '\ud83d\udcca Session Report Ingested',
+          pending:       '\ud83d\udcca Session Report Queued',
+          meet_mismatch: '\u26a0\ufe0f Session Report Not Applied',
+          error:         '\u26a0\ufe0f Session Report Error',
+        };
+        document.getElementById('sr-title').textContent = titles[data.status] || '\ud83d\udcca Session Report';
+
+        let summary;
+        if (data.status === 'applied') {
+          summary = 'Updated session for ' + (data.rows_updated ?? 0) + ' event row(s).';
+          if (data.unmatched_events && data.unmatched_events.length) {
+            summary += ' ' + data.unmatched_events.length + ' event(s) had no matching schedule row \u2014 see Log tab.';
+          }
+        } else if (data.status === 'pending') {
+          summary = 'No active meet yet \u2014 will apply automatically once a schedule is approved.';
+        } else if (data.status === 'meet_mismatch') {
+          summary = data.message || 'Meet name did not match \u2014 not applied.';
+        } else {
+          summary = data.message || 'Could not process this file.';
+        }
+        document.getElementById('sr-summary').textContent = summary;
+
+        document.getElementById('sr-meet-name').textContent = data.meet_name || '\u2014';
+        document.getElementById('sr-filename').textContent  = data.filename  || '\u2014';
+        clearInterval(sessionReportAgeTimer);
+        sessionReportAgeTimer = startAgeTicker(data.file_mtime, 'sr-file-age');
+        document.getElementById('session-report-overlay').classList.add('show');
+      } else {
+        clearInterval(sessionReportAgeTimer);
+        document.getElementById('session-report-overlay').classList.remove('show');
+      }
+    });
+}
+
+function dismissSessionReportNotice() {
+  fetch('/api/session_report/dismiss', {method: 'POST'})
+    .then(() => {
+      clearInterval(sessionReportAgeTimer);
+      document.getElementById('session-report-overlay').classList.remove('show');
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1464,6 +1564,7 @@ function obsCancelSchedule(num) {
 // ---------------------------------------------------------------------------
 function poll() {
   checkPendingSchedule();
+  checkSessionReportNotice();
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
@@ -1491,6 +1592,7 @@ function initialLoad(attempt) {
 }
 initialLoad();
 checkPendingSchedule();
+checkSessionReportNotice();
 setInterval(poll, {{ poll_interval }});
 </script>
 </body>
@@ -1797,6 +1899,17 @@ def api_approve_schedule():
 @app.route("/api/schedule/dismiss", methods=["POST"])
 def api_dismiss_schedule():
     dismiss_pending_schedule()
+    return jsonify({"status": "dismissed"})
+
+
+@app.route("/api/session_report/notice")
+def api_session_report_notice():
+    return jsonify(get_session_report_notice() or {})
+
+
+@app.route("/api/session_report/dismiss", methods=["POST"])
+def api_dismiss_session_report_notice():
+    dismiss_session_report_notice()
     return jsonify({"status": "dismissed"})
 
 

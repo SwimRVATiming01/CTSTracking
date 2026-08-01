@@ -254,6 +254,45 @@ def _extract_meet_info_from_csv(filepath, retries=5, delay=0.5):
     return info
 
 
+def detect_mm_report_type(filepath, retries=15, delay=1.0):
+    """
+    Sniff which of the two MM 8.0 CSV export types a file is, by content
+    (MM_COL_SESSION) rather than filename — operators can name exports anything.
+    Returns config.MM_REPORT_TYPE_PROGRAM, config.MM_REPORT_TYPE_SESSION, or None.
+
+    Retry budget is generous (~14s) on purpose: this gates schedule CSVs, which
+    can be several MB (a full multi-day heat sheet) and take noticeably longer
+    for Meet Manager (or AV scanning a freshly-written file) to release than
+    the small race files the rest of this module's retry loops were tuned for.
+    Giving up here means the whole schedule import silently never happens —
+    worse than a small race file being briefly delayed — so it's worth the wait.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            with open(filepath, newline="", encoding="utf-8-sig", errors="replace") as f:
+                row = next(csv.reader(f), [])
+            # startswith, not == : MM appends a filter suffix on some exports,
+            # e.g. "Meet Program - 11 and Over" when the heat sheet is filtered
+            # by age group, vs. the bare "Meet Program" seen on an unfiltered export.
+            marker = row[config.MM_COL_SESSION].strip() if len(row) > config.MM_COL_SESSION else ""
+            if marker.startswith(config.MM_REPORT_TYPE_PROGRAM):
+                return config.MM_REPORT_TYPE_PROGRAM
+            if marker.startswith(config.MM_REPORT_TYPE_SESSION):
+                return config.MM_REPORT_TYPE_SESSION
+            return None
+        except PermissionError as e:
+            if attempt < retries:
+                log.warning(f"File locked, retrying in {delay}s ({attempt}/{retries}): {os.path.basename(filepath)}")
+                time.sleep(delay)
+            else:
+                log.warning(f"Could not detect MM report type: {e}")
+                return None
+        except Exception as e:
+            log.warning(f"Could not detect MM report type: {e}")
+            return None
+    return None
+
+
 # ===========================================================================
 # RAW FILE BACKUP
 # ===========================================================================
@@ -406,6 +445,10 @@ def queue_schedule_for_approval(filepath):
     Stores the pending file info and waits for operator approval via the dashboard.
     """
     info = _extract_meet_info_from_csv(filepath)
+    try:
+        file_mtime = os.path.getmtime(filepath)
+    except OSError:
+        file_mtime = None
     with _pending_schedule_lock:
         _pending_schedule.clear()
         _pending_schedule.update({
@@ -414,6 +457,7 @@ def queue_schedule_for_approval(filepath):
             "meet_name":   info["meet_name"],
             "meet_date":   info["meet_date"],
             "session":     info["session"],
+            "file_mtime":  file_mtime,
             "detected_at": datetime.now().isoformat(),
         })
     log.info(f"Schedule queued for approval: {os.path.basename(filepath)} ({info['meet_name']})")
@@ -429,6 +473,205 @@ def dismiss_pending_schedule():
     """Clear the pending schedule without importing."""
     with _pending_schedule_lock:
         _pending_schedule.clear()
+
+
+# Holds an event->session map from a Session Report that arrived before any
+# active meet existed to apply it against (e.g. dropped before the matching
+# Meet Program was approved). Applied automatically the next time a schedule
+# is approved. Session Reports arriving after an active meet already exists
+# are applied immediately instead — see ingest_session_report().
+_pending_session_map = {}
+_pending_session_map_lock = threading.Lock()
+
+# Holds the outcome of the most recent Session Report ingestion, for display
+# in a notification modal (auto-applied already — this is FYI, not a gate).
+# Cleared when the operator dismisses it via the dashboard.
+_session_report_notice = {}
+_session_report_notice_lock = threading.Lock()
+
+
+def _set_session_report_notice(filename, file_mtime, status, meet_name=None, result=None, message=None):
+    with _session_report_notice_lock:
+        _session_report_notice.clear()
+        _session_report_notice.update({
+            "filename":         filename,
+            "file_mtime":       file_mtime,
+            "status":           status,
+            "meet_name":        meet_name,
+            "rows_updated":     (result or {}).get("rows_updated"),
+            "unmatched_events": (result or {}).get("unmatched_events"),
+            "message":          message,
+            "detected_at":      datetime.now().isoformat(),
+        })
+
+
+def get_session_report_notice():
+    """Return the most recent Session Report ingestion outcome, or None."""
+    with _session_report_notice_lock:
+        return dict(_session_report_notice) if _session_report_notice else None
+
+
+def dismiss_session_report_notice():
+    with _session_report_notice_lock:
+        _session_report_notice.clear()
+
+
+def _parse_session_report(filepath):
+    """
+    Parse a Session Report CSV into {event_id: {"session": label, "starts_at": "HH:MM"|None}}.
+    Session Reports cover potentially several sessions in one file, each
+    introduced by a "Session: N   <name>" row; every event row until the next
+    such row belongs to that session. Break rows (no event number) are skipped.
+    "starts_at" is the event's own single projected time (first heat only —
+    the Session Report has no per-heat breakdown), converted to 24h to match
+    projected_start/override_start's existing format.
+    """
+    events = {}
+    current_session = None
+    with open(filepath, newline="", encoding="utf-8-sig", errors="replace") as f:
+        for row in csv.reader(f):
+            while len(row) <= max(config.MM_COL_SR_SESSION_LABEL, config.MM_COL_SR_EVENT_NUM,
+                                   config.MM_COL_SR_EVENT_NAME, config.MM_COL_SR_STARTS_AT):
+                row.append("")
+
+            label = row[config.MM_COL_SR_SESSION_LABEL].strip()
+            m = re.match(r"Session:\s*(.*)", label, re.IGNORECASE)
+            if m:
+                current_session = m.group(1).strip()
+
+            event_num  = row[config.MM_COL_SR_EVENT_NUM].strip()
+            event_name = row[config.MM_COL_SR_EVENT_NAME].strip()
+            if event_num.isdigit() and event_name and current_session:
+                starts_at_raw = row[config.MM_COL_SR_STARTS_AT].strip()
+                events[event_num] = {
+                    "session": current_session,
+                    "starts_at": _parse_time_to_24h(starts_at_raw) if starts_at_raw else None,
+                }
+
+    return events
+
+
+def _apply_session_map(events, meet_id, filename):
+    """Backfill schedule.session (every heat of the event) and
+    schedule.session_report_start (heat 1 only — the Session Report has no
+    per-heat times) per event_id. Logs (not raises) any event the Session
+    Report knows about that has no matching schedule rows yet — see the
+    letter-mismatch discussion: fails soft, per-event, never crashes."""
+    updated = 0
+    unmatched = []
+    with get_write_conn() as conn:
+        for event_id, info in events.items():
+            cur = conn.execute(
+                "UPDATE schedule SET session=? WHERE meet_id=? AND event_id=?",
+                (info["session"], meet_id, event_id)
+            )
+            if cur.rowcount > 0:
+                updated += cur.rowcount
+            else:
+                unmatched.append(event_id)
+            if info.get("starts_at"):
+                conn.execute(
+                    "UPDATE schedule SET session_report_start=? WHERE meet_id=? AND event_id=? AND heat=?",
+                    (info["starts_at"], meet_id, event_id, "1")
+                )
+
+    if unmatched:
+        log.warning(f"Session report {filename}: no schedule match for event(s) {unmatched} in meet {meet_id}")
+    log.info(f"Session report {filename}: updated session for {updated} schedule row(s), meet={meet_id}")
+    return {"rows_updated": updated, "unmatched_events": unmatched}
+
+
+def _meet_names_conflict(name_a, name_b):
+    """True only if both names are known and clearly different — never
+    blocks on a missing/unknown name, only on an actual disagreement."""
+    return bool(name_a) and bool(name_b) and name_a.strip().lower() != name_b.strip().lower()
+
+
+def apply_pending_session_map(meet_id, meet_name):
+    """Called right after a schedule is approved/imported, to catch up on a
+    Session Report that arrived before there was an active meet to apply it to.
+    Refuses to apply if the pending report's own meet name doesn't match the
+    meet that was just approved — see the mismatched-files discussion."""
+    global _pending_session_map
+    with _pending_session_map_lock:
+        if not _pending_session_map:
+            return None
+        pending = dict(_pending_session_map)
+        _pending_session_map = {}
+
+    if _meet_names_conflict(pending.get("meet_name"), meet_name):
+        msg = f"Meet name mismatch: {pending.get('meet_name')!r} vs {meet_name!r}"
+        log.warning(f"Session report {pending['filename']} discarded: {msg}")
+        _log_ingestion(pending["filename"], "session_report", None, None, "error", msg)
+        _set_session_report_notice(pending["filename"], pending.get("file_mtime"), "meet_mismatch",
+                                    meet_name=pending.get("meet_name"), message=msg)
+        return {"status": "meet_mismatch"}
+
+    result = _apply_session_map(pending["event_sessions"], meet_id, pending["filename"])
+    _set_session_report_notice(pending["filename"], pending.get("file_mtime"), "applied",
+                                meet_name=meet_name, result=result)
+    return result
+
+
+def ingest_session_report(filepath):
+    """
+    Full Session Report ingestion. Runs alongside the Meet Program's own
+    schedule import (see queue_schedule_for_approval / approve_schedule) —
+    never touches the Meet Program's own projected_start/override_start,
+    only backfills schedule.session (every heat) and schedule.session_report_start
+    (heat 1 only, since the Session Report has no per-heat breakdown) per event.
+    """
+    global _pending_session_map
+    filename = os.path.basename(filepath)
+    try:
+        file_mtime = os.path.getmtime(filepath)
+    except OSError:
+        file_mtime = None
+    _backup_raw_file(filepath, "session_report")
+
+    try:
+        event_sessions = _parse_session_report(filepath)
+    except Exception as e:
+        msg = f"File read error: {e}"
+        _log_ingestion(filename, "session_report", None, None, "error", msg)
+        _set_session_report_notice(filename, file_mtime, "error", message=msg)
+        return {"status": "error", "message": msg}
+
+    if not event_sessions:
+        msg = "No valid event/session data found."
+        _log_ingestion(filename, "session_report", None, None, "error", msg)
+        _set_session_report_notice(filename, file_mtime, "error", message=msg)
+        return {"status": "error", "message": msg}
+
+    report_meet_name = _extract_meet_info_from_csv(filepath).get("meet_name")
+
+    active = get_active_meet()
+    if not active:
+        with _pending_session_map_lock:
+            _pending_session_map.clear()
+            _pending_session_map.update({
+                "filename": filename, "event_sessions": event_sessions,
+                "meet_name": report_meet_name, "file_mtime": file_mtime,
+            })
+        _log_ingestion(filename, "session_report", None, None, "pending", "No active meet")
+        _set_session_report_notice(filename, file_mtime, "pending", meet_name=report_meet_name)
+        log.info(f"Session report queued (no active meet yet): {filename}")
+        return {"status": "pending", "message": "No active meet"}
+
+    if _meet_names_conflict(report_meet_name, active["meet_name"]):
+        msg = f"Meet name mismatch: report={report_meet_name!r} active meet={active['meet_name']!r}"
+        log.warning(f"Session report {filename} rejected: {msg}")
+        _log_ingestion(filename, "session_report", None, None, "error", msg)
+        _set_session_report_notice(filename, file_mtime, "meet_mismatch",
+                                    meet_name=report_meet_name, message=msg)
+        return {"status": "meet_mismatch", "message": msg}
+
+    result = _apply_session_map(event_sessions, active["meet_id"], filename)
+    _log_ingestion(filename, "session_report", None, None, "applied",
+                    f"{result['rows_updated']} updated, {len(result['unmatched_events'])} unmatched")
+    _set_session_report_notice(filename, file_mtime, "applied",
+                                meet_name=active["meet_name"], result=result)
+    return {"status": "applied", "meet_id": active["meet_id"], **result}
 
 
 def approve_schedule(scrub_races=True, append=False):
@@ -455,6 +698,7 @@ def approve_schedule(scrub_races=True, append=False):
         result = import_schedule(filepath, active["meet_id"], append=True)
         with _pending_schedule_lock:
             _pending_schedule.clear()
+        apply_pending_session_map(active["meet_id"], active["meet_name"])
         log.info(f"Schedule appended: meet={active['meet_id']}")
         return {"status": "appended", "meet_id": active["meet_id"], **result}
 
@@ -484,6 +728,7 @@ def approve_schedule(scrub_races=True, append=False):
 
     with _pending_schedule_lock:
         _pending_schedule.clear()
+    apply_pending_session_map(meet_id, pending["meet_name"])
 
     log.info(f"Schedule imported: meet={meet_id} meet_name={meet_name} scrub={scrub_races}")
     return {"status": "imported", "meet_id": meet_id, "scrubbed": scrub_races, **result}

@@ -98,10 +98,23 @@ DASHBOARD_POLL_INTERVAL_MS = 5000
 MM_COL_LICENSE     = 0
 MM_COL_EXPORT_INFO = 1   # Contains MM version and export timestamp
 MM_COL_MEET_NAME   = 2   # Meet name and date range
-MM_COL_SESSION     = 5   # e.g. "Meet Program - Friday Finals"
+MM_COL_SESSION     = 5   # Report type marker: "Meet Program" or "Session Report" (also carries session text on some exports)
 MM_COL_EVENT_FULL  = 6   # e.g. "#1 Girls 13 & Over 100 Yard Breaststroke"
 MM_COL_HEAT_INFO   = 73  # e.g. "Heat   1 of 4   Prelims   Starts at 08:30 AM"
 MM_COL_LANE        = 74  # Lane number as string
+
+# Report type markers found in MM_COL_SESSION — used to tell the two MM export
+# types apart by content rather than filename (operators can name exports anything)
+MM_REPORT_TYPE_PROGRAM = "Meet Program"
+MM_REPORT_TYPE_SESSION = "Session Report"
+
+# Session Report-only columns (0-based) — see MM_REPORT_TYPE_SESSION above.
+# Gives event->session mapping; the heat sheet's own MM_COL_SESSION is a
+# constant "Meet Program" and carries no real per-session info.
+MM_COL_SR_SESSION_LABEL = 6   # e.g. "Session: 1   8 and Unders"
+MM_COL_SR_EVENT_NUM     = 15  # Event number, e.g. "25"
+MM_COL_SR_EVENT_NAME    = 16  # Event name, or "  Break: 5 Minutes:" for break rows
+MM_COL_SR_STARTS_AT     = 20  # Event's projected start time, e.g. "05:30 PM" — first heat only, not per-heat
 
 # ---------------------------------------------------------------------------
 # LOGGING

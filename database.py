@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS schedule (
     projected_start  TEXT,
     heat_order       INTEGER,
     override_start   TEXT,
+    session_report_start TEXT,
     imported_at      TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(meet_id, session, event_id, heat)
 );
@@ -177,6 +178,7 @@ def init_db():
             "ALTER TABLE race_log ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
             "ALTER TABLE race_log ADD COLUMN round TEXT",
             "ALTER TABLE pending_cts ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
+            "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
         ]:
             try:
                 conn.execute(sql)
@@ -366,6 +368,7 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             COALESCE(s.override_start, s.projected_start) AS effective_start,
             s.projected_start,
             s.override_start,
+            s.session_report_start,
             s.override_start IS NOT NULL AS has_override,
             r.id AS race_log_id,
             r.source,
@@ -431,6 +434,7 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                 "ALTER TABLE race_log ADD COLUMN dolphin_watch_c TEXT",
                 "ALTER TABLE race_log ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
                 "ALTER TABLE race_log ADD COLUMN round TEXT",
+                "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
             ]:
                 try:
                     conn.execute(sql)

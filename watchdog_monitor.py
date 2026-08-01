@@ -11,7 +11,10 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 import config
-from ingestion import ingest_cts_file, ingest_dolphin_file, ingest_gen_file, ingest_schedule_file
+from ingestion import (
+    ingest_cts_file, ingest_dolphin_file, ingest_gen_file, ingest_schedule_file,
+    ingest_session_report, detect_mm_report_type,
+)
 
 log = logging.getLogger("cts_tracker")
 
@@ -75,7 +78,17 @@ class IngestHandler(FileSystemEventHandler):
             elif ext == config.DOLPHIN_EXTENSION.lower():
                 result = ingest_dolphin_file(filepath)
             elif ext == config.SCHEDULE_EXTENSION.lower() and from_schedule_dir:
-                result = ingest_schedule_file(filepath)
+                report_type = detect_mm_report_type(filepath)
+                if report_type == config.MM_REPORT_TYPE_PROGRAM:
+                    result = ingest_schedule_file(filepath)
+                elif report_type == config.MM_REPORT_TYPE_SESSION:
+                    result = ingest_session_report(filepath)
+                else:
+                    log.warning(
+                        f"Ignoring {filename}: could not determine MM CSV report type "
+                        f"(unreadable or unrecognized content) — this file was NOT ingested"
+                    )
+                    return
             else:
                 log.debug(f"Ignoring: {filename} (wrong folder or unknown type)")
                 return
