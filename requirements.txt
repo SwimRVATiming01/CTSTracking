@@ -1,0 +1,7 @@
+# Server (cts_tracker.py) dependencies
+Flask==3.1.3
+watchdog==6.0.0
+obsws-python==1.8.0
+
+# Only needed if also running client.py on a timing machine (not the server)
+psutil==7.2.2
