@@ -944,19 +944,19 @@ function checkSessionReportNotice() {
   fetch('/api/session_report/notice')
     .then(r => r.json())
     .then(data => {
-      // Defer to the schedule-approval modal if both are pending at once \u2014
+      // Defer to the schedule-approval modal if both are pending at once —
       // it needs a decision, this one is FYI only and can wait a poll cycle.
       if (data && data.filename && document.getElementById('modal-overlay').classList.contains('show')) {
         return;
       }
       if (data && data.filename) {
         const titles = {
-          applied:       '\ud83d\udcca Session Report Ingested',
-          pending:       '\ud83d\udcca Session Report Queued',
+          applied:       '\\ud83d\\udcca Session Report Ingested',
+          pending:       '\\ud83d\\udcca Session Report Queued',
           meet_mismatch: '\u26a0\ufe0f Session Report Not Applied',
           error:         '\u26a0\ufe0f Session Report Error',
         };
-        document.getElementById('sr-title').textContent = titles[data.status] || '\ud83d\udcca Session Report';
+        document.getElementById('sr-title').textContent = titles[data.status] || '\\ud83d\\udcca Session Report';
 
         let summary;
         if (data.status === 'applied') {
