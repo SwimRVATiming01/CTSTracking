@@ -423,7 +423,27 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                      strftime('%s','1970-01-01 '||COALESCE(s.override_start,s.projected_start))
                     ) / 60.0, 2)
                 ELSE NULL
-            END AS delta_minutes
+            END AS delta_minutes,
+            (
+                SELECT GROUP_CONCAT(cts_race_num, char(10)) FROM (
+                    SELECT cts_race_num FROM race_log rh
+                    WHERE rh.meet_id = s.meet_id
+                    AND rh.event_id = s.event_id
+                    AND rh.heat = s.heat
+                    AND rh.cts_race_num IS NOT NULL
+                    ORDER BY rh.cts_file_time ASC
+                )
+            ) AS race_num_history,
+            (
+                SELECT GROUP_CONCAT(cts_race_num || ' → ' || dolphin_race_num, char(10)) FROM (
+                    SELECT cts_race_num, dolphin_race_num FROM race_log rh
+                    WHERE rh.meet_id = s.meet_id
+                    AND rh.event_id = s.event_id
+                    AND rh.heat = s.heat
+                    AND rh.dolphin_race_num IS NOT NULL
+                    ORDER BY rh.cts_file_time ASC
+                )
+            ) AS dolphin_num_history
         FROM schedule s
         LEFT JOIN race_log r
             ON r.meet_id = s.meet_id
@@ -445,7 +465,13 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
     if session:
         query += " AND s.session=?"
         params.append(session)
-    query += " ORDER BY s.heat_order ASC"
+    # Group by session first (extracted from the leading number in the session
+    # label, e.g. "1   Girls Individual Medley" -> 1), wall time within a session
+    # as the tiebreaker. Falls back to pure wall-time automatically when no real
+    # session data has been backfilled yet — every row still carries the constant
+    # "Meet Program" placeholder, which CAST(...AS INTEGER) reduces to 0 for all
+    # rows alike, collapsing this back to a plain heat_order sort.
+    query += " ORDER BY CAST(s.session AS INTEGER) ASC, s.heat_order ASC"
 
     if db_path:
         conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
@@ -513,12 +539,16 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
         row["is_next_p1"]     = False
         row["is_next_p2"]     = False
 
-    # Sequence gap flagging per pool
+    # Sequence gap flagging per pool. Sorted by actual ingestion time, not
+    # heat_order — heat_order is schedule *print* position (assigned by import
+    # order, e.g. per-session files appended over the course of a meet), not
+    # the order races actually happened in, and only real race order can tell
+    # us whether a number was actually skipped.
     for pool_num, threshold_check in [(1, lambda n: n < POOL2_THRESHOLD),
                                        (2, lambda n: n >= POOL2_THRESHOLD)]:
         pool_rows = [r for r in rows if r.get("cts_race_num") is not None
                      and threshold_check(r["cts_race_num"])]
-        pool_rows_sorted = sorted(pool_rows, key=lambda r: r["heat_order"])
+        pool_rows_sorted = sorted(pool_rows, key=lambda r: (r.get("cts_file_time") or "", r["heat_order"]))
 
         flagged_ids = set()
         for i in range(1, len(pool_rows_sorted)):
@@ -534,9 +564,10 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             else:
                 row["cts_gap_flag"] = row["cts_gap_flag"] or (row["schedule_id"] in flagged_ids)
 
-    # Dolphin gap flagging (single sequence, no pool split)
+    # Dolphin gap flagging (single sequence, no pool split) — same actual-time
+    # sort as the CTS gap check above, for the same reason.
     dolphin_rows = [r for r in rows if r.get("dolphin_race_num") is not None]
-    dolphin_sorted = sorted(dolphin_rows, key=lambda r: r["heat_order"])
+    dolphin_sorted = sorted(dolphin_rows, key=lambda r: (r.get("dolphin_file_time") or "", r["heat_order"]))
     dolphin_flagged = set()
     for i in range(1, len(dolphin_sorted)):
         prev = dolphin_sorted[i-1]["dolphin_race_num"]

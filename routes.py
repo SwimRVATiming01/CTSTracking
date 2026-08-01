@@ -118,14 +118,25 @@ DASHBOARD_HTML = """
     #eta-bar.show { display: inline; }
     .view-btn { border: none; padding: 3px 9px; border-radius: 4px; cursor: pointer;
                 font-family: monospace; font-size: 11px; margin-left: auto; }
+    .sched-toggle-btn { border: none; padding: 3px 9px; border-radius: 4px; cursor: pointer;
+                font-family: monospace; font-size: 11px; background: #0f3460; color: #a0c4ff; }
+    .sched-toggle-btn.off { background: #2a2a2a; color: #666; }
     #btn-schedule { background: #1a3a1a; color: #6bff6b; }
     #btn-schedule.active { background: #6bff6b; color: #0d1117; }
     #btn-log { background: #0f3460; color: #a0c4ff; }
     #btn-log.active { background: #a0c4ff; color: #0d1117; }
     #btn-reorder { background: #0f3460; color: #a0c4ff; }
     #btn-reorder.active { background: #a0c4ff; color: #0d1117; }
+    #btn-settings { background: #0f3460; color: #a0c4ff; }
+    #btn-settings.active { background: #a0c4ff; color: #0d1117; }
     #btn-restart { background: #3a1a1a; color: #ff6b6b; margin-left: 0; }
     #btn-restart:hover { background: #ff6b6b; color: #0d1117; }
+
+    /* Settings view */
+    .settings-section { border: 1px solid #1e2a4a; border-radius: 6px; margin: 14px; padding: 10px 14px; }
+    .settings-section h3 { margin: 0 0 8px; font-size: 13px; color: #a0c4ff; }
+    .settings-section .settings-empty { color: #555; font-size: 11px; }
+    .settings-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 
     /* Reorder view */
     .reorder-save { background:#0f3460; color:#a0c4ff; border:none; padding:5px 14px;
@@ -157,7 +168,10 @@ DASHBOARD_HTML = """
     tr.session-divider td { background: #0f3460; color: #a0c4ff; font-weight: bold;
         text-align: center; padding: 6px 10px; font-size: 14px;
         border-bottom: 1px solid #1e2a4a; white-space: nowrap;
-        position: sticky; top: var(--thead-height, 24px); z-index: 9; }
+        position: sticky; top: calc(var(--thead-height, 24px) - 1px); z-index: 9;
+        /* Extend the background 1px upward to cover any sub-pixel rounding gap
+           between this row's sticky offset and the thead's true rendered height. */
+        box-shadow: 0 -1px 0 0 #0f3460; }
     .session-divider-inner { position: relative; }
     .session-eta { position: absolute; left: 0; top: 50%; transform: translateY(-50%);
         text-align: left; font-weight: normal; }
@@ -170,6 +184,12 @@ DASHBOARD_HTML = """
     /* Gap flag */
     td.gap-flag { color: #ff4444 !important; font-weight: bold; }
     td.gap-flag::after { content: " ⚠"; font-size: 9px; }
+
+    /* Re-swim history — superseded attempt(s) stacked above the current one */
+    .prior-race-num { text-decoration: line-through; opacity: 0.5; font-size: 11px; }
+
+    /* Dolphin match history — available on hover instead of stacked */
+    .has-history { border-bottom: 1px dotted currentColor; cursor: help; }
 
     /* Delta */
     .late   { color: #ff6b6b; font-weight: bold; }
@@ -411,6 +431,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-clients"   onclick="setView('clients')">Clients</button>
     <button class="view-btn" id="btn-checklist" onclick="setView('checklist')">Checklist</button>
     <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
+    <button class="view-btn" id="btn-settings" onclick="setView('settings')">Settings</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
   </nav>
@@ -575,6 +596,42 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Settings View -->
+<div class="container" id="settings-view" style="display:none">
+  <div class="settings-section">
+    <h3>Schedule</h3>
+    <div class="settings-row">
+      <button class="sched-toggle-btn" id="btn-toggle-session" onclick="toggleSessionGrouping()">Session Grouping: ON</button>
+      <button class="sched-toggle-btn" id="btn-toggle-sort" onclick="toggleSortMode()">Sort: Wall Time</button>
+      <button class="sched-toggle-btn" id="btn-toggle-time-source" onclick="toggleTimeSource()">Projected Time: Meet Program</button>
+    </div>
+  </div>
+  <div class="settings-section">
+    <h3>Full Log</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>Reorder</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>History</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>Trends</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>Clients</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>OBS</h3>
+    <div class="settings-empty">Nothing here yet.</div>
+  </div>
+</div>
+
 <!-- OBS View -->
 <div class="container" id="obs-view" style="display:none">
   <div style="padding:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
@@ -699,6 +756,66 @@ let currentView = 'schedule';
 let lastEventId = null;
 let lastSession = null;
 
+// Schedule tab display toggles — persisted so a page reload mid-meet keeps
+// your last choice instead of resetting.
+let sessionGroupingOn = localStorage.getItem('sched_session_grouping') !== 'off';
+let sortMode = localStorage.getItem('sched_sort_mode') || 'walltime'; // 'walltime' | 'eventheat'
+let timeSource = localStorage.getItem('sched_time_source') || 'meetprogram'; // 'meetprogram' | 'sessionreport'
+let lastDashboardData = null;
+
+function sessionNum(session) {
+  const n = parseInt(session, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function compareRows(a, b) {
+  if (sessionGroupingOn) {
+    const diff = sessionNum(a.session) - sessionNum(b.session);
+    if (diff !== 0) return diff;
+  }
+  if (sortMode === 'walltime') return a.heat_order - b.heat_order;
+  const evDiff = (parseFloat(a.event_id) || 0) - (parseFloat(b.event_id) || 0);
+  if (evDiff !== 0) return evDiff;
+  return (parseFloat(a.heat) || 0) - (parseFloat(b.heat) || 0);
+}
+
+function updateScheduleToggleButtons() {
+  const sBtn = document.getElementById('btn-toggle-session');
+  const oBtn = document.getElementById('btn-toggle-sort');
+  const tBtn = document.getElementById('btn-toggle-time-source');
+  if (sBtn) {
+    sBtn.textContent = 'Session Grouping: ' + (sessionGroupingOn ? 'ON' : 'OFF');
+    sBtn.classList.toggle('off', !sessionGroupingOn);
+  }
+  if (oBtn) {
+    oBtn.textContent = 'Sort: ' + (sortMode === 'walltime' ? 'Wall Time' : 'Event/Heat');
+  }
+  if (tBtn) {
+    tBtn.textContent = 'Projected Time: ' + (timeSource === 'meetprogram' ? 'Meet Program' : 'Session Report');
+  }
+}
+
+function toggleSessionGrouping() {
+  sessionGroupingOn = !sessionGroupingOn;
+  localStorage.setItem('sched_session_grouping', sessionGroupingOn ? 'on' : 'off');
+  updateScheduleToggleButtons();
+  renderScheduleRows();
+}
+
+function toggleSortMode() {
+  sortMode = sortMode === 'walltime' ? 'eventheat' : 'walltime';
+  localStorage.setItem('sched_sort_mode', sortMode);
+  updateScheduleToggleButtons();
+  renderScheduleRows();
+}
+
+function toggleTimeSource() {
+  timeSource = timeSource === 'meetprogram' ? 'sessionreport' : 'meetprogram';
+  localStorage.setItem('sched_time_source', timeSource);
+  updateScheduleToggleButtons();
+  renderScheduleRows();
+}
+
 // Strips the redundant "Meet Program - " prefix MM exports carry on every
 // session label; falls back to the raw string for whole-meet exports where
 // stripping it would leave nothing (e.g. plain "Meet Program").
@@ -732,6 +849,7 @@ function setView(v) {
   document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
   document.getElementById('clients-view').style.display  = v === 'clients'  ? '' : 'none';
   document.getElementById('checklist-view').style.display = v === 'checklist' ? '' : 'none';
+  document.getElementById('settings-view').style.display = v === 'settings' ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
@@ -740,6 +858,7 @@ function setView(v) {
   document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
   document.getElementById('btn-clients').classList.toggle('active', v === 'clients');
   document.getElementById('btn-checklist').classList.toggle('active', v === 'checklist');
+  document.getElementById('btn-settings').classList.toggle('active', v === 'settings');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
@@ -747,6 +866,7 @@ function setView(v) {
   if (v === 'obs')     loadObsStatus();
   if (v === 'clients') loadClients();
   if (v === 'checklist') loadChecklist();
+  if (v === 'settings') updateScheduleToggleButtons();
 }
 setView('schedule');  // set initial active state
 
@@ -939,6 +1059,7 @@ function loadDashboard() {
   return fetch('/api/dashboard')
     .then(r => r.json())
     .then(data => {
+      lastDashboardData = data;
       if (data.meet) {
         const raw = data.meet.meet_name || '';
         document.getElementById('meet-name').textContent = raw.replace(/\s*-\s*\d{1,2}\/\d{1,2}\/\d{4}\s+to\s+\d{1,2}\/\d{1,2}\/\d{4}\s*$/, '');
@@ -984,25 +1105,34 @@ function loadDashboard() {
       document.getElementById('p2-current').textContent = fmtCompanion(p2Current, cp2);
       document.getElementById('p2-next').textContent    = fmtHeat(p2Next);
 
-      // Render rows
-      lastEventId = null;
-      lastSession = null;
-      document.getElementById('race-table').innerHTML =
-        rows.map(row => {
-          let html = '';
-          if (row.session !== lastSession) {
-            const sEta = sessionEtas[row.session];
-            const etaSpan = (sEta && sEta.time)
-              ? '<span class="session-eta" style="color:' + etaColor(sEta.avg_delta) + '">' +
-                'Final Heat: ' + etaText(sEta) + '</span>'
-              : '';
-            html += '<tr class="session-divider"><td colspan="16"><div class="session-divider-inner">' +
-              etaSpan + sessionLabel(row.session) + '</div></td></tr>';
-            lastSession = row.session;
-          }
-          return html + renderRow(row);
-        }).join('');
+      renderScheduleRows();
     });
+}
+
+// Sorts/groups the last-fetched rows per the schedule-tab toggles and renders
+// them — split out from loadDashboard() so toggling either button re-renders
+// instantly from cached data instead of waiting on another fetch.
+function renderScheduleRows() {
+  if (!lastDashboardData) return;
+  const rows = (lastDashboardData.rows || []).slice().sort(compareRows);
+  const sessionEtas = lastDashboardData.session_etas || {};
+  lastEventId = null;
+  lastSession = null;
+  document.getElementById('race-table').innerHTML =
+    rows.map(row => {
+      let html = '';
+      if (sessionGroupingOn && row.session !== lastSession) {
+        const sEta = sessionEtas[row.session];
+        const etaSpan = (sEta && sEta.time)
+          ? '<span class="session-eta" style="color:' + etaColor(sEta.avg_delta) + '">' +
+            'Final Heat: ' + etaText(sEta) + '</span>'
+          : '';
+        html += '<tr class="session-divider"><td colspan="16"><div class="session-divider-inner">' +
+          etaSpan + sessionLabel(row.session) + '</div></td></tr>';
+        lastSession = row.session;
+      }
+      return html + renderRow(row);
+    }).join('');
 }
 
 // Returns "3 · A" when heat_label ends with a final letter, otherwise just heat number.
@@ -1011,6 +1141,37 @@ function heatDisplay(heat, heat_label) {
   const last = heat_label.trim().split(/\s+/).pop();
   if (/^[A-Z]$/i.test(last)) return heat + ' \u00b7 ' + last.toUpperCase();
   return heat;
+}
+
+// The Session Report only gives one time per event (heat 1) — falls back to
+// the Meet Program's own effective_start for every other heat, and for heat 1
+// itself when no Session Report has been ingested yet.
+function projectedTimeFor(row) {
+  if (timeSource === 'sessionreport' && row.session_report_start) return row.session_report_start;
+  return row.effective_start;
+}
+
+function raceNumCell(row) {
+  const gapCls = row.cts_gap_flag ? ' class="gap-flag"' : '';
+  if (!row.race_num_history) return '<td' + gapCls + '>—</td>';
+  const nums = row.race_num_history.split('\\n');
+  const lines = nums.map((n, i) =>
+    i === nums.length - 1 ? n : '<span class="prior-race-num">' + n + '</span>'
+  );
+  return '<td' + gapCls + '>' + lines.join('<br>') + '</td>';
+}
+
+// Dolphin cell shows only the current matched number — full CTS->Dolphin
+// match history (across re-swims) is available on hover, not stacked inline.
+function dolphinCell(row) {
+  const val = (row.dolphin_race_num !== null && row.dolphin_race_num !== undefined) ? row.dolphin_race_num : '—';
+  const history = row.dolphin_num_history ? row.dolphin_num_history.split('\\n') : [];
+  const classes = [];
+  if (row.dolphin_gap_flag) classes.push('gap-flag');
+  if (history.length > 1) classes.push('has-history');
+  const classAttr = classes.length ? ' class="' + classes.join(' ') + '"' : '';
+  const titleAttr = history.length > 1 ? ' title="' + history.join('\\n').replace(/"/g, '&quot;') + '"' : '';
+  return '<td' + classAttr + titleAttr + '>' + val + '</td>';
 }
 
 function renderRow(row) {
@@ -1048,15 +1209,11 @@ function renderRow(row) {
       : '<td class="lane-empty">' + n + '</td>';
   }).join('');
 
-  // CTS # with gap flag
-  const ctsCls = row.cts_gap_flag ? ' class="gap-flag"' : '';
-  const ctsCell = '<td' + ctsCls + '>' + (hasRace ? row.cts_race_num : '\u2014') + '</td>';
+  // CTS # with gap flag \u2014 stacked history if there was a re-swim
+  const ctsCell = raceNumCell(row);
 
-  // Dolphin # with gap flag
-  const dolCls = row.dolphin_gap_flag ? ' class="gap-flag"' : '';
-  const dolCell = '<td' + dolCls + '>' +
-    (row.dolphin_race_num !== null && row.dolphin_race_num !== undefined
-      ? row.dolphin_race_num : '\u2014') + '</td>';
+  // Dolphin # with gap flag and hover history
+  const dolCell = dolphinCell(row);
 
   // Finish = CTS file creation time
   let finish = '\u2014';
@@ -1068,7 +1225,7 @@ function renderRow(row) {
   return '<tr class="' + cls + '">' +
     evCell +
     '<td>' + heatDisplay(row.heat, row.heat_label) + '</td>' +
-    '<td>' + (row.effective_start || '\u2014') + '</td>' +
+    '<td>' + (projectedTimeFor(row) || '\u2014') + '</td>' +
     '<td>' + delta + '</td>' +
     lanes +
     ctsCell +
@@ -1313,10 +1470,8 @@ function loadHistoryDashboard(meetId) {
               ? '<td class="lane-active">' + n + '</td>'
               : '<td class="lane-empty">' + n + '</td>';
           }).join('');
-          const ctsCell = '<td' + (row.cts_gap_flag ? ' class="gap-flag"' : '') + '>' +
-            (hasRace ? row.cts_race_num : '\u2014') + '</td>';
-          const dolCell = '<td' + (row.dolphin_gap_flag ? ' class="gap-flag"' : '') + '>' +
-            (row.dolphin_race_num ?? '\u2014') + '</td>';
+          const ctsCell = raceNumCell(row);
+          const dolCell = dolphinCell(row);
           const datasetCell = '<td>' + (row.dolphin_dataset ?? '\u2014') + '</td>';
           const finish = row.cts_file_time
             ? (row.cts_file_time.length >= 19 ? row.cts_file_time.substring(11,19) : row.cts_file_time)
@@ -1737,10 +1892,13 @@ function poll() {
 }
 
 function updateHeaderHeight() {
-  const h = document.getElementById('sticky-top').offsetHeight;
+  // getBoundingClientRect gives the exact sub-pixel height — offsetHeight rounds
+  // to a whole pixel, which left a hairline gap where the sticky session-divider
+  // row's computed top didn't quite match the thead's true rendered bottom edge.
+  const h = document.getElementById('sticky-top').getBoundingClientRect().height;
   document.documentElement.style.setProperty('--header-height', h + 'px');
   const thead = document.getElementById('schedule-thead');
-  if (thead) document.documentElement.style.setProperty('--thead-height', thead.offsetHeight + 'px');
+  if (thead) document.documentElement.style.setProperty('--thead-height', thead.getBoundingClientRect().height + 'px');
 }
 updateHeaderHeight();
 window.addEventListener('resize', updateHeaderHeight);
@@ -1756,6 +1914,7 @@ function initialLoad(attempt) {
 initialLoad();
 checkPendingSchedule();
 checkSessionReportNotice();
+updateScheduleToggleButtons();
 setInterval(poll, {{ poll_interval }});
 </script>
 </body>
