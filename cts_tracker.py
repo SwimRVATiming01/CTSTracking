@@ -36,6 +36,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("cts_tracker")
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
+logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
 
 
 # ===========================================================================

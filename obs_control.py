@@ -25,9 +25,59 @@ _schedule_lock = threading.Lock()
 # Per-instance last stream-settings applied timestamp
 _settings_applied_at = {1: None, 2: None}
 
-OBS_TIMEOUT  = 3       # seconds per connection attempt
-OBS_SCENE    = "Intro" # scene to switch to before starting the stream
-OBS_SCENE_DELAY = 5    # seconds to wait after scene switch before starting stream
+OBS_TIMEOUT          = 3    # seconds per connection attempt
+OBS_SCENE            = "Intro"
+OBS_SCENE_DELAY      = 5    # seconds to wait after scene switch before starting stream
+STATUS_POLL_INTERVAL = 10   # seconds between background status refreshes
+
+# Cached status — updated by background thread, read by get_status()
+_status_cache = {
+    1: {"connected": False, "streaming": False},
+    2: {"connected": False, "streaming": False},
+}
+_status_cache_lock = threading.Lock()
+
+
+def _fetch_status_live(instance_num):
+    """Connect to OBS and return status dict. May block up to OBS_TIMEOUT seconds."""
+    try:
+        import obsws_python as obs
+    except ImportError:
+        return {"connected": False, "streaming": False, "error": "obsws-python not installed"}
+    cfg = _obs_configs[instance_num]
+    try:
+        client = obs.ReqClient(
+            host=cfg["host"], port=cfg["port"],
+            password=cfg["password"], timeout=OBS_TIMEOUT,
+        )
+        try:
+            version = client.get_version()
+            stream  = client.get_stream_status()
+        finally:
+            try:
+                client.base_client.ws.close()
+            except Exception:
+                pass
+        return {
+            "connected":   True,
+            "obs_version": getattr(version, "obs_version", "?"),
+            "streaming":   bool(getattr(stream, "output_active", False)),
+        }
+    except Exception as e:
+        return {"connected": False, "streaming": False, "error": str(e)}
+
+
+def _status_updater():
+    """Background thread: refresh both OBS instance statuses on a fixed interval."""
+    while True:
+        for i in (1, 2):
+            status = _fetch_status_live(i)
+            with _status_cache_lock:
+                _status_cache[i] = status
+        time.sleep(STATUS_POLL_INTERVAL)
+
+
+threading.Thread(target=_status_updater, daemon=True).start()
 
 
 def _make_client(instance_num):
@@ -57,24 +107,9 @@ def _close(client):
 # ---------------------------------------------------------------------------
 
 def get_status(instance_num):
-    """
-    Returns connection + streaming status for one OBS instance.
-    Always returns a dict — never raises.
-    """
-    try:
-        client = _make_client(instance_num)
-        try:
-            version = client.get_version()
-            stream  = client.get_stream_status()
-        finally:
-            _close(client)
-        return {
-            "connected":   True,
-            "obs_version": getattr(version, "obs_version", "?"),
-            "streaming":   bool(getattr(stream, "output_active", False)),
-        }
-    except Exception as e:
-        return {"connected": False, "streaming": False, "error": str(e)}
+    """Return cached OBS status. Non-blocking — updated by background thread."""
+    with _status_cache_lock:
+        return dict(_status_cache[instance_num])
 
 
 def get_configs():
