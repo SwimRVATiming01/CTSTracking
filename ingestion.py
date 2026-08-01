@@ -41,19 +41,65 @@ def _parse_time_to_24h(time_str):
 
 
 def _parse_event_col(event_col):
-    m = re.match(r"^#(\w+)\s+(.*)", event_col.strip())
+    """
+    Parse the Event column.
+
+    MM8 prints back-to-back Girls/Boys events sharing one heat sheet block
+    as a single combined header, e.g. "#35 / 36 Girls / Boys 13&O 1500 Free" —
+    two real events (35=Girls, 36=Boys) with no per-heat event number in this
+    column; that split only shows up in the Heat column (see _parse_heat_col).
+
+    Returns dict:
+      combined   : bool
+      event_id   : event number, non-combined only (else None)
+      event_name : event name, non-combined only (else None)
+      genders    : {"Girls": "35", "Boys": "36"}, combined only (else None)
+      base_name  : name with the "Girls / Boys" token stripped, combined only
+    """
+    event_col = event_col.strip()
+
+    m = re.match(
+        r"^#(\d+)\s*/\s*(\d+)\s+(Girls|Boys)\s*/\s*(Girls|Boys)\s+(.*)",
+        event_col, re.IGNORECASE
+    )
     if m:
-        return m.group(1), m.group(2).strip()
-    return "", event_col.strip()
+        ev_a, ev_b, gender_a, gender_b, rest = m.groups()
+        return {
+            "combined": True, "event_id": None, "event_name": None,
+            "genders": {gender_a.title(): ev_a, gender_b.title(): ev_b},
+            "base_name": rest.strip(),
+        }
+
+    m = re.match(r"^#(\w+)\s+(.*)", event_col)
+    if m:
+        return {
+            "combined": False, "event_id": m.group(1), "event_name": m.group(2).strip(),
+            "genders": None, "base_name": None,
+        }
+    return {
+        "combined": False, "event_id": "", "event_name": event_col,
+        "genders": None, "base_name": None,
+    }
 
 
 def _parse_heat_col(heat_col):
-    result = {"heat_num": None, "heat_label": None, "heat_type": "Timed Finals", "start_time": None}
+    result = {"heat_num": None, "heat_label": None, "heat_type": "Timed Finals",
+              "start_time": None, "gender": None}
     heat_col = heat_col.strip()
 
-    m = re.match(r"Heat\s+(\d+)", heat_col, re.IGNORECASE)
-    if m:
-        result["heat_num"] = m.group(1)
+    # Combined-gender events (see _parse_event_col) carry the true per-gender
+    # heat number in this parenthetical, e.g.
+    #   "Heat   1   (Heat 1 Girls 1500 Free)   Starts at 02:25 PM"
+    # — the outer "Heat 1" just counts sequentially across both genders
+    # (Girls heat 1, Boys heat 1, Girls heat 2, Boys heat 2, ...).
+    m_inner = re.search(r"\(Heat\s+(\d+)\s+(Girls|Boys)\b", heat_col, re.IGNORECASE)
+    if m_inner:
+        result["heat_num"] = m_inner.group(1)
+        result["gender"] = m_inner.group(2).title()
+    else:
+        m = re.match(r"Heat\s+(\d+)", heat_col, re.IGNORECASE)
+        if m:
+            result["heat_num"] = m.group(1)
 
     m_time = re.search(r"Starts at\s+(\d{1,2}:\d{2}\s*[AP]M)", heat_col, re.IGNORECASE)
     if m_time:
@@ -106,14 +152,31 @@ def import_schedule(filepath, meet_id, session_override=None, append=False):
                 if not stats["meet_name"]:
                     stats["meet_name"] = _clean_meet_name(meet_raw)
 
-                event_id, event_name = _parse_event_col(event_raw)
-                if not event_id:
-                    stats["errors"].append(f"Line {line_num}: bad event col: {repr(event_raw)}")
-                    continue
-
+                event_info = _parse_event_col(event_raw)
                 parsed = _parse_heat_col(heat_raw)
                 if not parsed["heat_num"]:
                     continue
+
+                if event_info["combined"]:
+                    if not parsed["gender"]:
+                        stats["errors"].append(
+                            f"Line {line_num}: combined event but no per-heat gender in heat col: {repr(heat_raw)}"
+                        )
+                        continue
+                    event_id = event_info["genders"].get(parsed["gender"])
+                    if not event_id:
+                        stats["errors"].append(
+                            f"Line {line_num}: heat gender {parsed['gender']!r} not in combined event genders "
+                            f"{event_info['genders']}: {repr(event_raw)}"
+                        )
+                        continue
+                    event_name = f"{parsed['gender']} {event_info['base_name']}"
+                else:
+                    event_id = event_info["event_id"]
+                    event_name = event_info["event_name"]
+                    if not event_id:
+                        stats["errors"].append(f"Line {line_num}: bad event col: {repr(event_raw)}")
+                        continue
 
                 key = (session, event_id, parsed["heat_num"])
                 if key not in heats:
