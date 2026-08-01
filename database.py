@@ -3,6 +3,7 @@ database.py - Database connection, schema, and all query/write functions.
 """
 
 import csv
+import json
 import logging
 import os
 import sqlite3
@@ -157,6 +158,32 @@ CREATE TABLE IF NOT EXISTS snapshots (
     trigger        TEXT NOT NULL,
     created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS checklist_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    label           TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'manual',
+    checker_type    TEXT,
+    checker_params  TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS checklist_state (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id     INTEGER NOT NULL REFERENCES checklist_items(id),
+    meet_id     TEXT NOT NULL REFERENCES meets(meet_id),
+    checked     INTEGER NOT NULL DEFAULT 0,
+    checked_at  TEXT,
+    UNIQUE(item_id, meet_id)
+);
+
+CREATE TABLE IF NOT EXISTS checklist_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_text   TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -184,6 +211,7 @@ def init_db():
                 conn.execute(sql)
             except Exception:
                 pass  # Column already exists
+    _seed_checklist_items()
     log.info("Database ready.")
 
 
@@ -690,6 +718,110 @@ def wipe_database():
         conn.execute("DELETE FROM pending_cts")
         conn.execute("DELETE FROM ingestion_log")
     log.info("Database wiped — ready for new meet")
+
+
+# ===========================================================================
+# PRE-SESSION CHECKLIST
+# ===========================================================================
+# Config-driven by design: which items exist, their order, and whether they're
+# manual or auto-checked all live as data in checklist_items, not code, so new
+# items are a row insert rather than a deploy. Only a genuinely new *kind* of
+# check (a new checker_type, see checklist.py) needs an actual code change.
+
+def _checklist_seed():
+    """Small starter set derived from the system's existing architecture
+    (network share, schedule import, Companion, client heartbeats). Real
+    pre-meet routine items are expected to be added/edited later once actually
+    run through live -- this just proves the auto+manual mix end-to-end."""
+    return [
+        {"label": "Network share reachable", "category": "auto",
+         "checker_type": "path_reachable",
+         "checker_params": json.dumps({"path": config.WATCH_DIR}), "sort_order": 10},
+        {"label": "Schedule imported for active meet", "category": "auto",
+         "checker_type": "schedule_imported",
+         "checker_params": "{}", "sort_order": 20},
+        {"label": "Bitfocus Companion connected", "category": "auto",
+         "checker_type": "companion_connected",
+         "checker_params": "{}", "sort_order": 30},
+        {"label": "Timing machine client reporting in", "category": "auto",
+         "checker_type": "client_heartbeat",
+         "checker_params": json.dumps({"max_age_seconds": 120}), "sort_order": 40},
+        {"label": "Physical walkthrough complete (pads, watches, printer, etc.)",
+         "category": "manual", "checker_type": None, "checker_params": None,
+         "sort_order": 50},
+    ]
+
+
+def _seed_checklist_items():
+    """Insert the starter items exactly once, on first run only. Safe to call
+    every startup -- no-ops as soon as any item exists, so items you've since
+    edited or removed directly in the DB won't be silently re-added."""
+    with get_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM checklist_items").fetchone()[0]
+    if count > 0:
+        return
+    with get_write_conn() as conn:
+        for item in _checklist_seed():
+            conn.execute(
+                """INSERT INTO checklist_items
+                   (label, category, checker_type, checker_params, sort_order)
+                   VALUES (?,?,?,?,?)""",
+                (item["label"], item["category"], item["checker_type"],
+                 item["checker_params"], item["sort_order"])
+            )
+    log.info("Checklist starter items seeded.")
+
+
+def get_checklist_items(active_only=True):
+    query = "SELECT * FROM checklist_items"
+    if active_only:
+        query += " WHERE active=1"
+    query += " ORDER BY sort_order ASC, id ASC"
+    with get_conn() as conn:
+        rows = conn.execute(query).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_checklist_state(meet_id):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT item_id, checked, checked_at FROM checklist_state WHERE meet_id=?",
+            (meet_id,)
+        ).fetchall()
+    return {r["item_id"]: dict(r) for r in rows}
+
+
+def set_checklist_state(item_id, meet_id, checked):
+    checked_at = datetime.now().isoformat(timespec="seconds") if checked else None
+    with get_write_conn() as conn:
+        conn.execute(
+            """INSERT INTO checklist_state (item_id, meet_id, checked, checked_at)
+               VALUES (?,?,?,?)
+               ON CONFLICT(item_id, meet_id)
+               DO UPDATE SET checked=excluded.checked, checked_at=excluded.checked_at""",
+            (item_id, meet_id, 1 if checked else 0, checked_at)
+        )
+    return True
+
+
+def get_checklist_notes():
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, note_text, created_at FROM checklist_notes ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_checklist_note(text):
+    with get_write_conn() as conn:
+        cursor = conn.execute("INSERT INTO checklist_notes (note_text) VALUES (?)", (text,))
+    return cursor.lastrowid
+
+
+def delete_checklist_note(note_id):
+    with get_write_conn() as conn:
+        result = conn.execute("DELETE FROM checklist_notes WHERE id=?", (note_id,))
+    return result.rowcount > 0
 
 
 # ===========================================================================

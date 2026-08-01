@@ -25,11 +25,14 @@ from database import (
     add_manual_race_entry, update_race_entry,
     get_pending_summary, get_ingestion_log,
     export_race_log_csv, snapshot_db, get_snapshots,
+    get_checklist_items, get_checklist_state, set_checklist_state,
+    get_checklist_notes, add_checklist_note, delete_checklist_note,
 )
 from ingestion import (
     get_pending_schedule, approve_schedule, dismiss_pending_schedule,
     ingest_schedule_file, get_session_report_notice, dismiss_session_report_notice,
 )
+import checklist
 
 log = logging.getLogger("cts_tracker")
 
@@ -247,6 +250,35 @@ DASHBOARD_HTML = """
     .c-since { color:#555; font-size:10px; }
     .c-scripts { color:#a0c4ff; font-size:11px; }
 
+    /* Checklist View */
+    #btn-checklist { background:#1a3a2a; color:#6bffb0; }
+    #btn-checklist.active { background:#6bffb0; color:#0d1117; }
+    .checklist-table { border-collapse:collapse; width:100%; margin-bottom:20px; }
+    .checklist-table th { background:#0f3460; color:#a0c4ff; padding:6px 10px;
+                        text-align:left; font-size:10px; white-space:nowrap; }
+    .checklist-table td { padding:7px 10px; border-bottom:1px solid #1e2a4a;
+                        font-size:12px; vertical-align:middle; }
+    .checklist-table tr:hover td { background:#222; }
+    .checklist-item-manual { color:#888; font-size:9px; margin-left:6px; }
+    .checklist-status { display:flex; align-items:center; gap:6px; font-size:11px; }
+    .cl-dot { display:inline-block; width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+    .cl-dot.ok      { background:#6bff6b; }
+    .cl-dot.fail    { background:#ff6b6b; }
+    .cl-dot.unknown { background:#444; }
+    .checklist-notes { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; max-width:640px; }
+    .checklist-notes-title { font-size:13px; font-weight:bold; color:#6bffb0; margin-bottom:6px; }
+    .checklist-note-input { width:100%; min-height:60px; background:#0f3460; border:1px solid #1e2a4a;
+                        border-radius:3px; color:#e0e0e0; font-family:monospace; font-size:12px;
+                        padding:7px; resize:vertical; }
+    .checklist-note-input:focus { outline:1px solid #6bffb0; }
+    .checklist-notes-list { margin-top:12px; display:flex; flex-direction:column; gap:6px; }
+    .checklist-note-row { background:#0f3460; border-radius:4px; padding:6px 9px; font-size:12px;
+                        display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+    .checklist-note-text { white-space:pre-wrap; word-break:break-word; }
+    .checklist-note-meta { color:#555; font-size:10px; white-space:nowrap; display:flex; align-items:center; gap:8px; }
+    .checklist-note-del { background:none; border:none; color:#ff6b6b; cursor:pointer; font-size:13px; padding:0; }
+    .checklist-note-del:hover { color:#ff9b9b; }
+
     /* OBS View */
     #btn-obs { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
     #btn-obs.active { background:#c0a0ff; color:#0d1117; }
@@ -376,7 +408,8 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
-    <button class="view-btn" id="btn-clients"  onclick="setView('clients')">Clients</button>
+    <button class="view-btn" id="btn-clients"   onclick="setView('clients')">Clients</button>
+    <button class="view-btn" id="btn-checklist" onclick="setView('checklist')">Checklist</button>
     <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
@@ -507,6 +540,37 @@ DASHBOARD_HTML = """
     </table>
     <div id="clients-empty" style="color:#555;font-size:12px;padding:14px;display:none">
       No clients have reported in yet.
+    </div>
+  </div>
+</div>
+
+<!-- Checklist View -->
+<div class="container" id="checklist-view" style="display:none">
+  <div style="padding:14px;">
+    <div id="checklist-no-meet" style="color:#555;font-size:12px;display:none;margin-bottom:10px;">
+      No active meet — auto-checks that depend on meet state will show as unknown, and checkbox state won't be saved.
+    </div>
+    <table class="checklist-table">
+      <thead>
+        <tr>
+          <th style="width:36px"></th>
+          <th class="left">Item</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="checklist-table"></tbody>
+    </table>
+
+    <div class="checklist-notes">
+      <div class="checklist-notes-title">Notes</div>
+      <div style="color:#555;font-size:11px;margin-bottom:8px;">
+        Jot anything to revisit after the meet — new steps to add, connections that acted up, etc.
+        Entries are timestamped and persist across restarts and new meet uploads.
+      </div>
+      <textarea id="checklist-note-input" class="checklist-note-input"
+                placeholder="Type a note and click Add..."></textarea>
+      <button class="reorder-save" style="margin-top:6px;" onclick="addChecklistNote()">Add Note</button>
+      <div id="checklist-notes-list" class="checklist-notes-list"></div>
     </div>
   </div>
 </div>
@@ -667,6 +731,7 @@ function setView(v) {
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
   document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
   document.getElementById('clients-view').style.display  = v === 'clients'  ? '' : 'none';
+  document.getElementById('checklist-view').style.display = v === 'checklist' ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
   document.getElementById('btn-log').classList.toggle('active', v === 'log');
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
@@ -674,12 +739,14 @@ function setView(v) {
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
   document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
   document.getElementById('btn-clients').classList.toggle('active', v === 'clients');
+  document.getElementById('btn-checklist').classList.toggle('active', v === 'checklist');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
   if (v === 'obs')     loadObsStatus();
   if (v === 'clients') loadClients();
+  if (v === 'checklist') loadChecklist();
 }
 setView('schedule');  // set initial active state
 
@@ -1382,6 +1449,102 @@ function loadClients() {
           '</tr>';
       }).join('');
     })
+    .catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// CHECKLIST
+// ---------------------------------------------------------------------------
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function loadChecklist() {
+  fetch('/api/checklist')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('checklist-no-meet').style.display = data.meet ? 'none' : '';
+      const items = data.items || [];
+      const tbody = document.getElementById('checklist-table');
+      tbody.innerHTML = items.map(item => {
+        const checkbox = '<input type="checkbox" ' + (item.checked ? 'checked' : '') +
+          (data.meet ? '' : ' disabled') +
+          ' onchange="toggleChecklistItem(' + item.id + ', this.checked)">';
+        const manualTag = item.category === 'manual'
+          ? '<span class="checklist-item-manual">MANUAL</span>' : '';
+        let status = '<span style="color:#555">—</span>';
+        if (item.category === 'auto') {
+          const cls = item.auto_status === 'ok' ? 'ok'
+                    : item.auto_status === 'fail' ? 'fail' : 'unknown';
+          const label = item.auto_detail || (
+            cls === 'unknown' ? 'Unknown' : cls === 'ok' ? 'OK' : 'Failed'
+          );
+          status = '<span class="checklist-status"><span class="cl-dot ' + cls + '"></span>' + label + '</span>';
+        }
+        return '<tr>' +
+          '<td>' + checkbox + '</td>' +
+          '<td class="left">' + item.label + manualTag + '</td>' +
+          '<td>' + status + '</td>' +
+          '</tr>';
+      }).join('');
+    })
+    .catch(() => {});
+  loadChecklistNotes();
+}
+
+function toggleChecklistItem(itemId, checked) {
+  fetch('/api/checklist/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, checked: checked })
+  }).catch(() => {});
+}
+
+function loadChecklistNotes() {
+  fetch('/api/checklist/notes')
+    .then(r => r.json())
+    .then(data => {
+      const notes = data.notes || [];
+      const list = document.getElementById('checklist-notes-list');
+      if (!notes.length) {
+        list.innerHTML = '<div style="color:#555;font-size:11px;">No notes yet.</div>';
+        return;
+      }
+      list.innerHTML = notes.map(n =>
+        '<div class="checklist-note-row">' +
+          '<div class="checklist-note-text">' + escapeHtml(n.note_text) + '</div>' +
+          '<div class="checklist-note-meta">' + n.created_at +
+            ' <button class="checklist-note-del" onclick="deleteChecklistNote(' + n.id + ')" title="Remove">&times;</button>' +
+          '</div>' +
+        '</div>'
+      ).join('');
+    })
+    .catch(() => {});
+}
+
+function addChecklistNote() {
+  const input = document.getElementById('checklist-note-input');
+  const text = input.value.trim();
+  if (!text) return;
+  fetch('/api/checklist/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  })
+    .then(r => r.json())
+    .then(() => {
+      input.value = '';
+      loadChecklistNotes();
+    })
+    .catch(() => {});
+}
+
+function deleteChecklistNote(noteId) {
+  fetch('/api/checklist/notes/' + noteId, { method: 'DELETE' })
+    .then(() => loadChecklistNotes())
     .catch(() => {});
 }
 
@@ -2203,6 +2366,72 @@ def api_clients():
             })
     rows.sort(key=lambda r: r["machine_id"])
     return jsonify({"clients": rows})
+
+
+# ---------------------------------------------------------------------------
+# PRE-SESSION CHECKLIST
+# ---------------------------------------------------------------------------
+
+def _online_client_count():
+    now = datetime.now()
+    with _clients_lock:
+        return sum(
+            1 for c in _clients.values()
+            if (now - c["last_seen"]).total_seconds() <= HEARTBEAT_STALE
+        )
+
+
+@app.route("/api/checklist")
+def api_checklist():
+    meet = get_active_meet()
+    items = get_checklist_items()
+    context = {
+        "meet": meet,
+        "companion_connected": bool(_companion_p1 or _companion_p2),
+        "client_online_count": _online_client_count(),
+    }
+    items = checklist.evaluate_items(items, context)
+    state = get_checklist_state(meet["meet_id"]) if meet else {}
+    for item in items:
+        s = state.get(item["id"])
+        item["checked"] = bool(s and s["checked"])
+        item["checked_at"] = s["checked_at"] if s else None
+    return jsonify({"items": items, "meet": meet})
+
+
+@app.route("/api/checklist/check", methods=["POST"])
+def api_checklist_check():
+    meet = get_active_meet()
+    if not meet:
+        return jsonify({"error": "No active meet"}), 400
+    data = request.json or {}
+    item_id = data.get("item_id")
+    checked = bool(data.get("checked"))
+    if not item_id:
+        return jsonify({"error": "item_id required"}), 400
+    set_checklist_state(item_id, meet["meet_id"], checked)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/checklist/notes", methods=["GET"])
+def api_checklist_notes_get():
+    return jsonify({"notes": get_checklist_notes()})
+
+
+@app.route("/api/checklist/notes", methods=["POST"])
+def api_checklist_notes_post():
+    data = request.json or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    note_id = add_checklist_note(text)
+    return jsonify({"ok": True, "id": note_id})
+
+
+@app.route("/api/checklist/notes/<int:note_id>", methods=["DELETE"])
+def api_checklist_notes_delete(note_id):
+    ok = delete_checklist_note(note_id)
+    return jsonify({"ok": ok})
 
 
 # ---------------------------------------------------------------------------
