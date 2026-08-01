@@ -8,7 +8,7 @@ import threading
 import time
 
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 import config
 from ingestion import (
@@ -131,9 +131,18 @@ def start_watchdog():
 
     Neither folder is required to be accessible at startup — if unreachable,
     the server logs a warning and keeps retrying in the background.
+
+    Uses PollingObserver rather than the native ReadDirectoryChangesW backend:
+    WATCH_DIR is a UNC path, and that native backend's change-notification
+    handle can go silently stale after an SMB session drop (share host
+    reboot, network blip, machine sleep) — Windows doesn't raise an error,
+    the observer just stops delivering events with nothing logged, and only
+    a process restart re-opens a working handle. Polling re-lists the
+    directory each interval instead of holding a handle, so it can't wedge
+    that way.
     """
     handler = IngestHandler()
-    observer = Observer()
+    observer = PollingObserver()
     observer.daemon = True
     observer.start()
 
