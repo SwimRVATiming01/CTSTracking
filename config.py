@@ -44,6 +44,13 @@ GEN_EXTENSION      = ".gen"
 DOLPHIN_EXTENSION  = ".do3"
 SCHEDULE_EXTENSION = ".csv"
 
+# Set False to stop ingesting .oxps entirely now that .gen has taken over.
+# .gen already wins priority over .oxps per event/heat regardless of this
+# setting -- this just stops new .oxps rows from being written at all, e.g.
+# to cut down on log/backup noise once .gen has full confirmed coverage.
+# Flip back to True any time to resume .oxps ingestion, no other changes needed.
+INGEST_CTS_ENABLED = False
+
 # ---------------------------------------------------------------------------
 # DOLPHIN CORRELATION
 # ---------------------------------------------------------------------------

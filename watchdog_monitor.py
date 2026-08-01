@@ -72,6 +72,9 @@ class IngestHandler(FileSystemEventHandler):
 
         try:
             if ext == config.CTS_EXTENSION.lower():
+                if not config.INGEST_CTS_ENABLED:
+                    log.debug(f"Ignoring {filename}: .oxps ingestion disabled (INGEST_CTS_ENABLED=False)")
+                    return
                 result = ingest_cts_file(filepath)
             elif ext == config.GEN_EXTENSION.lower():
                 result = ingest_gen_file(filepath)
