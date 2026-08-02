@@ -1,9 +1,25 @@
-Resolved checklist notes
-=========================
+Checklist notes log
+====================
 Notes originally lived in the dashboard's Checklist "Notes" scratchpad
-(checklist_notes table). Once a note is actually addressed, it's deleted
-from that live list and recorded here instead, so the scratchpad only ever
-shows open items.
+(checklist_notes table). Once a note is actually addressed (done, or a
+deliberate decision not to do it), it's deleted from that live list and
+recorded in RESOLVED below. If only partially addressed with real work
+still open, it goes in BACKLOG instead -- and stays in (or goes back into)
+the live scratchpad too, since it's still an open item, not a closed one.
+
+
+===========================================================================
+RESOLVED
+===========================================================================
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:33:03):
+hello world
+
+Resolved 2026-08-02:
+Test note from when the checklist Notes feature was first built. Not a
+real item -- deleted.
 
 -----------------------------------------------------------------------
 
@@ -36,3 +52,171 @@ capturing/displaying the source IP on set_heat POSTs as a live sanity
 check, but decided against it: Companion is already reliable about
 auto-booting at startup and interlocking everything, so the extra
 visibility wasn't judged worth building. No code changed.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:38:18):
+timing machine clients: remove clinets tab, display that information
+here... make snapshot incase decide to double back on that
+
+Resolved 2026-08-02:
+Retired the standalone Clients tab (nav button, view, table CSS, JS,
+/api/clients route) entirely. Its per-machine status (online/offline,
+last seen, network share / Dolphin folder / CTS folder / Vicreo health)
+now shows as bullet points on a new "Timing machine clients" checklist
+item (new timing_clients checker in checklist.py, replacing the old
+client_heartbeat checker which only showed a bare count). The shared
+per-client row logic that used to live only in the /api/clients route
+was extracted into _client_rows() in routes.py, now used solely by
+/api/checklist.
+
+Snapshot approach (user deferred to Claude's judgment): rather than a
+separate backup file, committed the prior checklist/UI work as its own
+commit (23e9e53) before making this change, so the old Clients tab's
+full implementation is preserved and easily recoverable from git history
+if ever wanted back -- no duplicate backup file needed.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:41:28):
+we want obs to be included in this checklist, but i want to discuss the
+pros and cons of just adding a check for it, or potentially roping the
+entire process into this instead of a seperate tab
+
+Resolved 2026-08-02:
+Discussed alongside the (functionally identical) question this raised
+about Dolphin5. Decided against folding OBS or Dolphin5 into the
+checklist: unlike the Clients tab, both have real interactive controls
+(stream start/schedule buttons, host/port config forms, a TCP-control
+start button) that checklist rows have no pattern for hosting, and both
+get used *during* a session too, not just at pre-session check time.
+Landed on a middle ground instead: combined the two previously-separate
+OBS and Dolphin5 tabs into one "Peripherals" tab (OBS panels + Dolphin5
+panels together on one page, each group labeled) rather than building
+a second-level sub-tab UI, since with only two peripherals today that
+extra navigation structure isn't earned yet -- revisit toward real
+sub-tabs if a third peripheral shows up later.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:39:32):
+we're not ready to fully implement this but dolphin stopwatches will
+talk over to the app over tcp, so this can eventually be automated check
+
+Resolved 2026-08-02:
+The prerequisite this note was waiting on -- Dolphin5 talking to
+CTSTracking over TCP -- is exactly what got built and live-tested
+earlier tonight, so the blocker was gone. Added a new "Dolphin5 TCP
+control" auto-checklist item (dolphin5_connected checker in
+checklist.py, checklist_items row id 6): shows per-pool connected/not
+connected/not-configured status with host:port, "ok" if at least one
+pool is connected (same any-of-N pattern as Companion and Timing
+Machine Clients). Reports "TCP control not started" if
+DOLPHIN5_TCP_ENABLED's dolphin5_control.start() hasn't run yet.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:42:35):
+dolphin meet manager: manualy checks i think; open, meet mobile off,
+dolphin dataset selected
+
+Resolved 2026-08-02:
+Added as three separate manual checkboxes (checklist_items ids 7-9,
+sort_order 46-48) rather than one combined item, per request: "Dolphin
+Meet Manager open", "Meet Mobile off", "Correct Dolphin dataset
+selected" -- each tracked independently.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:46:23):
+streamline checklist: manual checks; correct config selected, config
+configed correctly
+
+Resolved 2026-08-02:
+Added as a manual checkbox, "Streamline: correct config selected"
+(checklist_items id 14). Checked Streamline's own web UI
+(172.16.0.119:9000) as a possible automation path first -- it's a
+client-side-routed single-page app, so a plain HTTP GET to any path
+(including /Config) just returns the same empty shell; the real content
+only renders after its JS runs in a browser and calls some backend API
+that wasn't identified. User decided not to dig further into that API
+and confirmed this stays manual for now.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:53:33):
+gen7 check, just mark this for now, i'll have to fill it out later
+
+Resolved 2026-08-02:
+Added as a manual checkbox, "GEN7 software settings configured"
+(checklist_items id 15) -- a single high-level check rather than
+enumerating individual GEN7 settings, per request.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:59:09):
+session report ingested last.   optional
+
+Resolved 2026-08-02:
+New auto checklist item "Session report imported (optional)"
+(checklist_items id 16, session_report_imported checker in
+checklist.py), same shape as the Schedule Imported item but meet-scoped
+to Session Report ingestion specifically -- shows "Session report last
+ingested Xm ago" or, since a Session Report is genuinely optional
+(the schedule always comes from the Meet Program instead), reports
+ok=None ("unknown"/grey, not a red failure) when none has been ingested
+yet, rather than reusing the pass/fail red/green semantics of the
+required Schedule Imported check.
+
+Needed a new schedule.session_report_imported_at column (migration
+added in both of database.py's ALTER TABLE lists -- init_db() and the
+old-snapshot-migration path inside get_race_dashboard) since the
+existing session_report_start column only stores the parsed start
+time, not when it was ingested. Stamped in ingestion.py's
+_apply_session_map. Known gap: rows updated by a Session Report
+ingested *before* tonight (i.e. before this column existed) won't show
+a timestamp until the next Session Report re-ingestion for that meet --
+not a bug, just no retroactive data to backfill from.
+
+
+===========================================================================
+BACKLOG (not resolved -- real work still open, kept in the live Notes
+scratchpad too)
+===========================================================================
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:43:38):
+is there a way for ahk scripts to expose themselves over lan?  so we can
+have a check "[x ipaddress] has [x script deployed]"
+
+Stopgap added 2026-08-02, real automation still open:
+Added two separate manual checklist items, one per category -- "Gen7
+AHK scripts deployed and running (automation work in progress)"
+(checklist_items id 10) and "Meet Manager AHK scripts deployed and
+running (automation work in progress)" (id 11) -- as placeholders so
+each can be checked off independently today, without building the real
+automation yet.
+
+Design discussed, not yet built (pick up here, don't re-derive): there
+are two categories of AHK scripts -- "Gen7" scripts (interpret Bitfocus
+Companion commands to control GEN7) and "Meet Manager" scripts (control
+Meet Manager + Dolphin4, usually same PC; Dolphin4 side being phased out
+for Dolphin5) -- multiple slightly-varying script files exist within
+each category (per-pool/chase-start variations). User's own framing:
+have each script POST a heartbeat to the server carrying its own
+filename, appearing on the checklist -- same idea as client.py's
+existing /api/heartbeat, just with the individual script as the
+reporting unit instead of the whole machine. Proposed shape (not
+committed to): new endpoint e.g. POST /api/ahk_heartbeat with
+{filename, machine_id, category}, tracked in-memory like the existing
+_clients dict (not DB-persisted -- "is this script currently running"
+is a live fact, not history worth keeping across restarts), surfaced as
+a new checklist item listing each currently-reporting script grouped by
+category, using the same HEARTBEAT_STALE staleness threshold client.py
+heartbeats already use. Open question not yet answered: what should
+count as "ok" (green) vs "fail" (red) here, given which exact scripts
+*should* be running varies meet-to-meet -- might need to just be
+informational rather than pass/fail. User explicitly deferred the
+detailed design ("don't want to dig into the minutiae right now") --
+re-open when actually building it.
