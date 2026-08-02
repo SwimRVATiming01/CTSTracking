@@ -253,26 +253,6 @@ DASHBOARD_HTML = """
     .modal-form .full-width { grid-column: 1 / -1; }
     .modal-form input:focus { outline:1px solid #a0c4ff; }
 
-    /* Clients View */
-    #btn-clients { background:#0f3460; color:#a0c4ff; }
-    #btn-clients.active { background:#a0c4ff; color:#0d1117; }
-    #clients-view { padding:14px; }
-    .clients-table { border-collapse:collapse; width:100%; }
-    .clients-table th { background:#0f3460; color:#a0c4ff; padding:6px 10px;
-                        text-align:left; font-size:10px; white-space:nowrap;
-                        position:sticky; top:0; z-index:10; }
-    .clients-table td { padding:5px 10px; border-bottom:1px solid #1e2a4a;
-                        font-size:12px; white-space:nowrap; }
-    .clients-table tr:hover td { background:#222; }
-    .c-dot { display:inline-block; width:9px; height:9px; border-radius:50%;
-             margin-right:5px; flex-shrink:0; }
-    .c-dot.ok      { background:#6bff6b; }
-    .c-dot.warn    { background:#ff6b6b; }
-    .c-dot.unknown { background:#444; }
-    .c-machine { color:#e0e0e0; font-weight:bold; }
-    .c-since { color:#555; font-size:10px; }
-    .c-scripts { color:#a0c4ff; font-size:11px; }
-
     /* Checklist View */
     #btn-checklist { background:#1a3a2a; color:#6bffb0; }
     #btn-checklist.active { background:#6bffb0; color:#0d1117; }
@@ -303,10 +283,12 @@ DASHBOARD_HTML = """
     .checklist-note-del { background:none; border:none; color:#ff6b6b; cursor:pointer; font-size:13px; padding:0; }
     .checklist-note-del:hover { color:#ff9b9b; }
 
-    /* OBS View */
-    #btn-obs { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
-    #btn-obs.active { background:#c0a0ff; color:#0d1117; }
-    #obs-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    /* Peripherals View (OBS + Dolphin5) */
+    #btn-peripherals { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
+    #btn-peripherals.active { background:#c0a0ff; color:#0d1117; }
+    #peripherals-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    .peripherals-group-title { font-size:11px; color:#666; letter-spacing:1px; text-transform:uppercase;
+                                margin:6px 0 -4px; }
     .obs-panels { display:flex; gap:12px; flex-wrap:wrap; }
     .obs-panel { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; min-width:300px; flex:1; }
     .obs-panel-title { font-size:13px; font-weight:bold; color:#c0a0ff; margin-bottom:10px; }
@@ -337,10 +319,7 @@ DASHBOARD_HTML = """
     .obs-dot.live { background:#e94560; }
     .obs-msg { font-size:11px; min-height:15px; margin-top:6px; }
 
-    /* Dolphin5 View -- reuses .obs-* structural classes above */
-    #btn-dolphin5 { background:#1a3a3a; color:#6bffe0; margin-left:0; }
-    #btn-dolphin5.active { background:#6bffe0; color:#0d1117; }
-    #dolphin5-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    /* Dolphin5 panels -- reuse .obs-* structural classes above */
     .dolphin5-last-msg { font-family:monospace; font-size:11px; color:#a0c4ff;
                           background:#0f3460; border-radius:3px; padding:5px 8px;
                           margin-top:6px; word-break:break-all; }
@@ -440,10 +419,8 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
-    <button class="view-btn" id="btn-clients"   onclick="setView('clients')">Clients</button>
     <button class="view-btn" id="btn-checklist" onclick="setView('checklist')">Checklist</button>
-    <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
-    <button class="view-btn" id="btn-dolphin5" onclick="setView('dolphin5')">Dolphin5</button>
+    <button class="view-btn" id="btn-peripherals" onclick="setView('peripherals')">Peripherals</button>
     <button class="view-btn" id="btn-settings" onclick="setView('settings')">Settings</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
@@ -554,30 +531,6 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
-<!-- Clients View -->
-<div class="container" id="clients-view" style="display:none">
-  <div style="padding:14px;">
-    <table class="clients-table">
-      <thead>
-        <tr>
-          <th>Machine</th>
-          <th>Status</th>
-          <th>Last Seen</th>
-          <th>AHK Scripts</th>
-          <th>Vicreo</th>
-          <th>Network Share</th>
-          <th>CTSDolphin</th>
-          <th>CTS Folder</th>
-        </tr>
-      </thead>
-      <tbody id="clients-table"></tbody>
-    </table>
-    <div id="clients-empty" style="color:#555;font-size:12px;padding:14px;display:none">
-      No clients have reported in yet.
-    </div>
-  </div>
-</div>
-
 <!-- Checklist View -->
 <div class="container" id="checklist-view" style="display:none">
   <div style="padding:14px;">
@@ -636,11 +589,7 @@ DASHBOARD_HTML = """
     <div class="settings-empty">Nothing here yet.</div>
   </div>
   <div class="settings-section">
-    <h3>Clients</h3>
-    <div class="settings-empty">Nothing here yet.</div>
-  </div>
-  <div class="settings-section">
-    <h3>OBS</h3>
+    <h3>Peripherals</h3>
     <div class="settings-empty">Nothing here yet.</div>
   </div>
   <div class="settings-section">
@@ -649,9 +598,10 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
-<!-- OBS View -->
-<div class="container" id="obs-view" style="display:none">
-  <div style="padding:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+<!-- Peripherals View (OBS + Dolphin5) -->
+<div class="container" id="peripherals-view" style="display:none">
+  <div class="peripherals-group-title">OBS</div>
+  <div class="obs-panels">
 
     <!-- OBS 1 panel -->
     <div class="obs-panel">
@@ -752,22 +702,19 @@ DASHBOARD_HTML = """
     </div>
 
   </div>
-</div>
 
-<!-- Dolphin5 View -->
-<div class="container" id="dolphin5-view" style="display:none">
-  <div style="padding:14px;">
-    <div class="obs-row" style="margin-bottom:12px;">
-      <button class="obs-btn obs-btn-start" onclick="dolphin5Start()">&#9654; Start TCP Control</button>
-      <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;">Not started this session</span>
-    </div>
-    <div style="font-size:11px;color:#888;margin-bottom:12px;max-width:700px;">
-      Sends <code>setEventAndHeat</code> to each pool's Dolphin5 unit to follow GEN7's real progress.
-      Starting is a one-way switch for this running session (no separate stop) &mdash; restart the
-      server to fully stop it. Nothing is sent until this is started.
-    </div>
+  <div class="peripherals-group-title">DOLPHIN5</div>
+  <div class="obs-row">
+    <button class="obs-btn obs-btn-start" onclick="dolphin5Start()">&#9654; Start TCP Control</button>
+    <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;">Not started this session</span>
+  </div>
+  <div style="font-size:11px;color:#888;max-width:700px;">
+    Sends <code>setEventAndHeat</code> to each pool's Dolphin5 unit to follow GEN7's real progress.
+    Starting is a one-way switch for this running session (no separate stop) &mdash; restart the
+    server to fully stop it. Nothing is sent until this is started.
+  </div>
 
-    <div class="obs-panels">
+  <div class="obs-panels">
 
       <!-- Pool 1 panel -->
       <div class="obs-panel">
@@ -817,7 +764,6 @@ DASHBOARD_HTML = """
         <div style="font-size:10px;color:#555;margin-top:3px;" id="dolphin5-2-last-msg-age"></div>
       </div>
 
-    </div>
   </div>
 </div>
 
@@ -930,9 +876,7 @@ function setView(v) {
   document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
-  document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
-  document.getElementById('dolphin5-view').style.display = v === 'dolphin5' ? '' : 'none';
-  document.getElementById('clients-view').style.display  = v === 'clients'  ? '' : 'none';
+  document.getElementById('peripherals-view').style.display = v === 'peripherals' ? '' : 'none';
   document.getElementById('checklist-view').style.display = v === 'checklist' ? '' : 'none';
   document.getElementById('settings-view').style.display = v === 'settings' ? '' : 'none';
   document.getElementById('btn-schedule').classList.toggle('active', v === 'schedule');
@@ -940,18 +884,14 @@ function setView(v) {
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
-  document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
-  document.getElementById('btn-dolphin5').classList.toggle('active', v === 'dolphin5');
-  document.getElementById('btn-clients').classList.toggle('active', v === 'clients');
+  document.getElementById('btn-peripherals').classList.toggle('active', v === 'peripherals');
   document.getElementById('btn-checklist').classList.toggle('active', v === 'checklist');
   document.getElementById('btn-settings').classList.toggle('active', v === 'settings');
   if (v === 'log')     loadFullLog();
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
-  if (v === 'obs')     loadObsStatus();
-  if (v === 'dolphin5') loadDolphin5Status();
-  if (v === 'clients') loadClients();
+  if (v === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
   if (v === 'checklist') loadChecklist();
   if (v === 'settings') updateScheduleToggleButtons();
 }
@@ -1651,50 +1591,6 @@ function loadTrends() {
 }
 
 // ---------------------------------------------------------------------------
-// CLIENTS
-// ---------------------------------------------------------------------------
-
-function loadClients() {
-  fetch('/api/clients')
-    .then(r => r.json())
-    .then(data => {
-      const rows  = data.clients || [];
-      const tbody = document.getElementById('clients-table');
-      const empty = document.getElementById('clients-empty');
-      if (!rows.length) {
-        tbody.innerHTML = '';
-        empty.style.display = '';
-        return;
-      }
-      empty.style.display = 'none';
-      tbody.innerHTML = rows.map(c => {
-        const online   = c.online;
-        const connDot  = '<span class="c-dot ' + (online ? 'ok' : 'warn') + '"></span>';
-        const status   = connDot + (online ? 'Online' : 'Offline');
-        const since    = c.last_seen ? '<span class="c-since">' + c.last_seen + '</span>' : '—';
-        const scripts  = c.ahk_scripts && c.ahk_scripts.length
-          ? '<span class="c-scripts">' + c.ahk_scripts.join(', ') + '</span>'
-          : '<span style="color:#555">—</span>';
-        function dot(val) {
-          if (val === null || val === undefined) return '<span class="c-dot unknown"></span>—';
-          return '<span class="c-dot ' + (val ? 'ok' : 'warn') + '"></span>' + (val ? 'OK' : 'No');
-        }
-        return '<tr>' +
-          '<td class="c-machine">' + c.machine_id + '</td>' +
-          '<td>' + status + '</td>' +
-          '<td>' + since + '</td>' +
-          '<td>' + scripts + '</td>' +
-          '<td>' + dot(c.vicreo_running) + '</td>' +
-          '<td>' + dot(c.share_ok) + '</td>' +
-          '<td>' + dot(c.dolphin_ok) + '</td>' +
-          '<td>' + dot(c.cts_ok) + '</td>' +
-          '</tr>';
-      }).join('');
-    })
-    .catch(() => {});
-}
-
-// ---------------------------------------------------------------------------
 // CHECKLIST
 // ---------------------------------------------------------------------------
 
@@ -2068,9 +1964,7 @@ function poll() {
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
-  else if (currentView === 'obs')     loadObsStatus();
-  else if (currentView === 'dolphin5') loadDolphin5Status();
-  else if (currentView === 'clients') loadClients();
+  else if (currentView === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
   else if (currentView === 'checklist') loadChecklist();
   // history view is not auto-refreshed — it's read-only static data
 }
@@ -2711,40 +2605,31 @@ def api_heartbeat():
     return jsonify({"ok": True})
 
 
-@app.route("/api/clients")
-def api_clients():
-    """Return last known status for all clients."""
+# ---------------------------------------------------------------------------
+# PRE-SESSION CHECKLIST
+# ---------------------------------------------------------------------------
+
+def _client_rows():
+    """Last known status for all client.py machines, used by the Timing
+    Machine Clients checklist item (this used to be its own Clients tab --
+    retired 2026-08-02, folded into the checklist instead)."""
     now = datetime.now()
     with _clients_lock:
-        rows = []
-        for c in _clients.values():
-            age    = (now - c["last_seen"]).total_seconds()
-            online = age <= HEARTBEAT_STALE
-            rows.append({
+        rows = [
+            {
                 "machine_id":     c["machine_id"],
-                "online":         online,
+                "online":         (now - c["last_seen"]).total_seconds() <= HEARTBEAT_STALE,
                 "last_seen":      c["last_seen"].strftime("%H:%M:%S"),
                 "ahk_scripts":    c["ahk_scripts"],
                 "vicreo_running": c["vicreo_running"],
                 "share_ok":       c["share_ok"],
                 "dolphin_ok":     c["dolphin_ok"],
                 "cts_ok":         c["cts_ok"],
-            })
+            }
+            for c in _clients.values()
+        ]
     rows.sort(key=lambda r: r["machine_id"])
-    return jsonify({"clients": rows})
-
-
-# ---------------------------------------------------------------------------
-# PRE-SESSION CHECKLIST
-# ---------------------------------------------------------------------------
-
-def _online_client_count():
-    now = datetime.now()
-    with _clients_lock:
-        return sum(
-            1 for c in _clients.values()
-            if (now - c["last_seen"]).total_seconds() <= HEARTBEAT_STALE
-        )
+    return rows
 
 
 @app.route("/api/checklist")
@@ -2754,7 +2639,7 @@ def api_checklist():
     context = {
         "meet": meet,
         "companion_connected": bool(_companion_p1 or _companion_p2),
-        "client_online_count": _online_client_count(),
+        "clients": _client_rows(),
     }
     items = checklist.evaluate_items(items, context)
     state = get_checklist_state(meet["meet_id"]) if meet else {}
