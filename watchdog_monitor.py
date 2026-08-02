@@ -13,7 +13,7 @@ from watchdog.observers.polling import PollingObserver
 import config
 from ingestion import (
     ingest_cts_file, ingest_dolphin_file, ingest_gen_file, ingest_schedule_file,
-    ingest_session_report, detect_mm_report_type,
+    ingest_session_report, detect_mm_report_type, ingest_dolphin5_file,
 )
 
 log = logging.getLogger("cts_tracker")
@@ -80,6 +80,11 @@ class IngestHandler(FileSystemEventHandler):
                 result = ingest_gen_file(filepath)
             elif ext == config.DOLPHIN_EXTENSION.lower():
                 result = ingest_dolphin_file(filepath)
+            elif ext == config.DOLPHIN5_XML_EXTENSION.lower():
+                if not config.INGEST_DOLPHIN5_XML_ENABLED:
+                    log.debug(f"Ignoring {filename}: Dolphin5 XML ingestion disabled (INGEST_DOLPHIN5_XML_ENABLED=False)")
+                    return
+                result = ingest_dolphin5_file(filepath)
             elif ext == config.SCHEDULE_EXTENSION.lower() and from_schedule_dir:
                 report_type = detect_mm_report_type(filepath)
                 if report_type == config.MM_REPORT_TYPE_PROGRAM:

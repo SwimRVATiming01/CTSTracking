@@ -62,6 +62,15 @@ if __name__ == "__main__":
     else:
         log.info("Snapshot scheduler disabled — snapshots taken on schedule import only")
 
+    # Start Dolphin5 "chase GEN7" TCP control. Explicit, config-gated call
+    # (not an import-time auto-start) since this is the one module that
+    # writes to live hardware the moment it runs.
+    if config.DOLPHIN5_TCP_ENABLED:
+        import dolphin5_control
+        dolphin5_control.start()
+    else:
+        log.info("Dolphin5 TCP control disabled (DOLPHIN5_TCP_ENABLED=False)")
+
     # Start Flask
     log.info(f"Dashboard available at http://{config.FLASK_HOST}:{config.FLASK_PORT}")
     log.info(f"On other LAN machines: http://<this-machine-ip>:{config.FLASK_PORT}")

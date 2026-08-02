@@ -8,6 +8,7 @@ import os
 import re
 import time
 import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 log = logging.getLogger("cts_tracker")
@@ -85,6 +86,73 @@ def parse_dolphin_filename(filename):
 
     if result["dolphin_race_num"] is None:
         log.warning(f"Could not extract race number from Dolphin filename: {filename}")
+
+    return result
+
+
+def parse_dolphin5_xml_filename(filename):
+    """
+    Parse a Dolphin5 XML result filename.
+
+    Expected base format (before client.py's relay suffix):
+    {meet}_Event_{eventNum}_Heat_{heat}_Race_{race}_{m}_{d}_{y}_{h}_{min}.xml
+    e.g. 007_Event__Heat_1_Race_1_8_1_2026_16_40.xml (eventNum blank).
+    client.py then appends __<MACHINEID>__<YYYYMMDDTHHMMSS> before the
+    extension, same as it does for .do3 — but that suffix is optional here
+    (e.g. when parsing a raw sample straight off the Dolphin5 unit that
+    never went through client.py).
+
+    Gotcha: eventNum is confirmed always blank at this venue, which produces
+    a literal "Event__Heat" double-underscore already inside the base name.
+    A naive split on "__" — even stem.rsplit("__", 2) — can't reliably tell
+    that embedded double-underscore apart from a real client.py suffix: a
+    base name with no suffix at all still contains exactly one "__" (from
+    the blank event), so rsplit("__", 2) wrongly slices it into a bogus
+    2-part "suffix" instead of leaving it alone (caught by testing this
+    function directly against the real unsuffixed samples on disk, per the
+    verification plan). Matching the whole filename with one regex — base
+    pattern followed by an *optional* suffix group — sidesteps the ambiguity
+    entirely instead of trying to guess a split point up front.
+
+    Returns dict: meet_num, event_number (str, None if blank), heat_number
+    (str), dolphin_race_num (int, from the filename's race number — display
+    only, never a join key), machine_id, file_time (datetime, the client.py
+    relay timestamp, None if no suffix present), original_name.
+    """
+    result = {
+        "meet_num": None, "event_number": None, "heat_number": None,
+        "dolphin_race_num": None, "machine_id": None, "file_time": None,
+        "original_name": filename,
+    }
+    stem = os.path.splitext(filename)[0]
+
+    m = re.match(
+        r"^(\d+)_Event_(\d*)_Heat_(\d+)_Race_(\d+)_\d+_\d+_\d+_\d+_\d+"
+        r"(?:__(.+)__(\d{8}T\d{6}))?$",
+        stem
+    )
+    if not m:
+        log.warning(f"Dolphin5 XML filename not in expected format: {filename}")
+        result["original_name"] = stem
+        return result
+
+    result["meet_num"] = m.group(1)
+    result["event_number"] = str(int(m.group(2))) if m.group(2) else None
+    if not m.group(2):
+        log.debug(f"Dolphin5 XML filename has blank event number (expected): {filename}")
+    result["heat_number"] = str(int(m.group(3)))
+    result["dolphin_race_num"] = int(m.group(4))
+
+    machine_id, timestamp = m.group(5), m.group(6)
+    if machine_id and timestamp:
+        result["machine_id"] = machine_id
+        try:
+            result["file_time"] = datetime.strptime(timestamp, "%Y%m%dT%H%M%S")
+        except ValueError:
+            log.warning(f"Bad timestamp in Dolphin5 XML filename: {filename}")
+        result["original_name"] = stem[:m.start(5) - 2]  # strip "__machine__timestamp"
+    else:
+        result["original_name"] = stem
 
     return result
 
@@ -179,6 +247,89 @@ def parse_dolphin_file(filepath):
     log.info(
         f"Dolphin parsed: watch_a={result['watch_a']} "
         f"watch_b={result['watch_b']} watch_c={result['watch_c']}"
+    )
+    return result
+
+
+# ===========================================================================
+# DOLPHIN5 XML FILE PARSER
+# ===========================================================================
+
+def parse_dolphin5_xml_file(filepath):
+    """
+    Parse a Dolphin5 XML race-result file.
+
+    Extracts event/heat number (for the filename/content cross-check, same
+    warn-don't-block pattern as ingest_gen_file's event/heat check), the
+    precise race time from <Time> (more precise than the filename's
+    minute-granularity — used as the time-window fallback match anchor), and
+    per-lane watch times from only the LAST <Split> per lane (drop DQ
+    entirely per decision; ignore any earlier splits if Dolphin5 is ever
+    misconfigured to log intermediate ones). Lanes 9-10 are always-padding
+    at this venue and are dropped.
+
+    Deliberately does NOT read <DQ>, <Empty>, or <FinalTime> — kept out of
+    the returned dict entirely so there's no dangling field inviting a
+    future "just surface DQ" addition.
+
+    Returns dict: event_number (str or None), heat_number (str or None),
+    precise_time (datetime or None), watch_a/b/c — each an 8-element list,
+    None where no time was recorded. Returns None on file read/parse error.
+    """
+    result = {
+        "event_number": None,
+        "heat_number": None,
+        "precise_time": None,
+        "watch_a": [None] * 8,
+        "watch_b": [None] * 8,
+        "watch_c": [None] * 8,
+    }
+    try:
+        root = ET.parse(filepath).getroot()
+    except (ET.ParseError, OSError) as e:
+        log.error(f"Could not parse Dolphin5 XML file {filepath}: {e}")
+        return None
+
+    event_text = (root.findtext("EventNumber") or "").strip()
+    if event_text:
+        try:
+            result["event_number"] = str(int(event_text))
+        except ValueError:
+            log.warning(f"Non-numeric <EventNumber> in Dolphin5 XML file {filepath}: {event_text!r}")
+            result["event_number"] = event_text
+
+    heat_text = (root.findtext("HeatNumber") or "").strip()
+    result["heat_number"] = heat_text or None
+
+    time_text = (root.findtext("Time") or "").strip()
+    if time_text:
+        try:
+            result["precise_time"] = datetime.strptime(time_text, "%Y-%m-%d %I:%M:%S %p")
+        except ValueError:
+            log.warning(f"Bad <Time> value in Dolphin5 XML file {filepath}: {time_text!r}")
+
+    for lane_el in root.findall("./Lanes/Lane"):
+        lane_text = (lane_el.findtext("LaneNumber") or "").strip()
+        try:
+            lane = int(lane_text)
+        except ValueError:
+            continue
+        if not (1 <= lane <= 8):
+            continue
+        idx = lane - 1
+
+        splits = lane_el.findall("./Splits/Split")
+        if not splits:
+            continue
+        last_split = splits[-1]
+
+        for tag, target in (("TimerA", "watch_a"), ("TimerB", "watch_b"), ("TimerC", "watch_c")):
+            value = (last_split.findtext(tag) or "").strip()
+            result[target][idx] = value or None
+
+    log.info(
+        f"Dolphin5 XML parsed: heat={result['heat_number']} "
+        f"watch_a={result['watch_a']} watch_b={result['watch_b']} watch_c={result['watch_c']}"
     )
     return result
 

@@ -113,18 +113,20 @@ CREATE TABLE IF NOT EXISTS race_log (
     dolphin_watch_a         TEXT,
     dolphin_watch_b         TEXT,
     dolphin_watch_c         TEXT,
+    dolphin_source_format   TEXT NOT NULL DEFAULT 'do3',
     ingested_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS pending_dolphin (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    dolphin_race_num  INTEGER NOT NULL,
-    dolphin_dataset   INTEGER,
-    file_time         TEXT NOT NULL,
-    source_machine    TEXT NOT NULL,
-    filename          TEXT NOT NULL,
-    raw_data          TEXT,
-    arrived_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    dolphin_race_num       INTEGER NOT NULL,
+    dolphin_dataset        INTEGER,
+    file_time              TEXT NOT NULL,
+    source_machine         TEXT NOT NULL,
+    filename               TEXT NOT NULL,
+    raw_data               TEXT,
+    dolphin_source_format  TEXT NOT NULL DEFAULT 'do3',
+    arrived_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS pending_cts (
@@ -206,6 +208,8 @@ def init_db():
             "ALTER TABLE race_log ADD COLUMN round TEXT",
             "ALTER TABLE pending_cts ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
             "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
+            "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
+            "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
         ]:
             try:
                 conn.execute(sql)
@@ -489,6 +493,8 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                 "ALTER TABLE race_log ADD COLUMN source TEXT NOT NULL DEFAULT 'cts'",
                 "ALTER TABLE race_log ADD COLUMN round TEXT",
                 "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
+                "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
+                "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
             ]:
                 try:
                     conn.execute(sql)

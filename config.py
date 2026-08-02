@@ -66,6 +66,42 @@ DOLPHIN_MATCH_WINDOW_SECONDS = 15
 DOLPHIN_PENDING_TIMEOUT_SECONDS = 0
 
 # ---------------------------------------------------------------------------
+# DOLPHIN5 XML INGESTION + TCP CONTROL
+# ---------------------------------------------------------------------------
+
+DOLPHIN5_XML_EXTENSION = ".xml"
+
+# Set False to stop ingesting Dolphin5 .xml files. Passive/read-only — safe
+# to leave on by default, unlike DOLPHIN5_TCP_ENABLED below.
+INGEST_DOLPHIN5_XML_ENABLED = True
+
+# Master switch for the "chase GEN7" TCP control feature (dolphin5_control.py).
+# This is the only part of the Dolphin5 feature that writes to live hardware,
+# so it defaults OFF until deliberately enabled per venue.
+DOLPHIN5_TCP_ENABLED = False
+
+# Per-pool Dolphin5 unit connection info. PLACEHOLDER VALUES -- confirm real
+# host/port with the venue before enabling DOLPHIN5_TCP_ENABLED. Do not reuse
+# DolphinTCPTest's single test/live address pair as-is; there are two
+# physical units here, one per pool.
+DOLPHIN5_CONFIGS = {
+    1: {"host": "0.0.0.0", "port": 2000, "machine_id": "DOLPHIN5-P1"},
+    2: {"host": "0.0.0.0", "port": 2000, "machine_id": "DOLPHIN5-P2"},
+}
+
+# How often (seconds) the chase loop polls get_current_heat_state().
+DOLPHIN5_POLL_INTERVAL_SECONDS = 2
+
+# A GEN7 event/heat change must hold steady for this long before the chase
+# loop pushes setEventAndHeat, so a human quickly stepping through events
+# manually doesn't spam Dolphin5 with one command per poll tick.
+DOLPHIN5_CHASE_DEBOUNCE_SECONDS = 3
+
+# Reconnect behavior for the persistent per-pool TCP connection.
+DOLPHIN5_CONNECT_TIMEOUT_SECONDS = 5
+DOLPHIN5_RECONNECT_DELAY_SECONDS = 5
+
+# ---------------------------------------------------------------------------
 # BACKUP & SNAPSHOT SETTINGS
 # ---------------------------------------------------------------------------
 

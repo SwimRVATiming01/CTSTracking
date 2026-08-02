@@ -21,6 +21,7 @@ from database import (
 from parsers import (
     parse_cts_filename, parse_dolphin_filename, parse_cts_file, parse_dolphin_file,
     parse_gen_filename, parse_gen_file,
+    parse_dolphin5_xml_filename, parse_dolphin5_xml_file,
 )
 
 log = logging.getLogger("cts_tracker")
@@ -436,6 +437,132 @@ def ingest_dolphin_file(filepath):
     else:
         _add_pending_dolphin(fn, filename, dolphin_data)
         _log_ingestion(filename, "dolphin", fn.get("machine_id"), fn.get("file_time"), "pending", "No CTS match found")
+        return {"status": "pending", "message": "Saved to pending"}
+
+
+def _match_dolphin5_by_event_heat(meet_id, event_number, heat_number, file_time, fn, filename, xml_data):
+    """
+    Try an exact (event, heat) match against an unmatched race_log row,
+    sourced only from the XML file's own content — never from
+    dolphin5_control's in-memory "last commanded" state, even though that
+    would likely be a more reliable guess. Explicit user decision: race
+    matching info must come from the file, not an educated guess — keeps
+    ingestion.py fully decoupled from dolphin5_control.py (no import either
+    direction).
+
+    Returns None immediately when event_number is blank — the expected,
+    normal case today, since <EventNumber> is confirmed always blank in
+    every real sample seen so far. Kept as a real, working path (not
+    stubbed) so it starts working automatically if that field is ever
+    populated, without further code changes.
+    """
+    if not event_number or not heat_number:
+        return None
+
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT id, cts_file_time FROM race_log
+               WHERE matched=0 AND meet_id=? AND event_id=? AND heat=?
+               ORDER BY ABS(julianday(COALESCE(cts_file_time, ?)) - julianday(?)) LIMIT 1""",
+            (meet_id, event_number, heat_number, file_time.isoformat(), file_time.isoformat())
+        ).fetchone()
+
+    if not row:
+        return None
+
+    delta = (
+        abs((file_time - datetime.fromisoformat(row["cts_file_time"])).total_seconds())
+        if row["cts_file_time"] else None
+    )
+    dataset = int(fn["meet_num"]) if fn.get("meet_num") else None
+    wa = json.dumps(xml_data["watch_a"]) if xml_data else None
+    wb = json.dumps(xml_data["watch_b"]) if xml_data else None
+    wc = json.dumps(xml_data["watch_c"]) if xml_data else None
+
+    with get_write_conn() as conn:
+        conn.execute(
+            """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
+               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
+               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?,dolphin_source_format=?
+               WHERE id=?""",
+            (fn.get("dolphin_race_num"), dataset, file_time.isoformat(),
+             fn.get("machine_id"), filename, delta, wa, wb, wc, "dolphin5_xml", row["id"])
+        )
+    log.info(
+        f"Dolphin5 XML exact event/heat match: event={event_number} heat={heat_number} "
+        f"-> race_log id={row['id']}"
+    )
+    return row["id"]
+
+
+def ingest_dolphin5_file(filepath):
+    """
+    Full Dolphin5 XML ingestion pipeline.
+
+    Structured as ingest_dolphin_file's parallel, with one extra tier tried
+    first: an exact (event, heat) match sourced only from the XML file's own
+    content (_match_dolphin5_by_event_heat) before falling back to the
+    existing time-window correlation shared with .do3/.gen.
+    """
+    filename = os.path.basename(filepath)
+    _backup_raw_file(filepath, "dolphin5")
+    fn = parse_dolphin5_xml_filename(filename)
+
+    if fn["dolphin_race_num"] is None:
+        msg = "Could not extract race number"
+        _log_ingestion(filename, "dolphin5", fn.get("machine_id"), fn.get("file_time"), "error", msg)
+        return {"status": "error", "message": msg}
+
+    xml_data = parse_dolphin5_xml_file(filepath)
+    if xml_data is None:
+        msg = "Failed to parse Dolphin5 XML file — check log for details"
+        _log_ingestion(filename, "dolphin5", fn.get("machine_id"), fn.get("file_time"), "error", msg)
+        return {"status": "error", "message": msg}
+
+    if fn.get("heat_number") and xml_data.get("heat_number") and fn["heat_number"] != xml_data["heat_number"]:
+        log.warning(
+            f"Dolphin5 XML filename/content heat mismatch in {filename}: "
+            f"filename={fn['heat_number']} content={xml_data['heat_number']}"
+        )
+
+    heat_number = xml_data.get("heat_number") or fn.get("heat_number")
+    # Content time is more precise than the filename's minute-granularity;
+    # fall back to the client.py relay timestamp only if content time is missing.
+    file_time = xml_data.get("precise_time") or fn.get("file_time")
+
+    if not file_time:
+        msg = "Could not determine a race time from filename or content"
+        _log_ingestion(filename, "dolphin5", fn.get("machine_id"), None, "error", msg)
+        return {"status": "error", "message": msg}
+
+    matched_id = None
+    active = get_active_meet()
+    if active:
+        matched_id = _match_dolphin5_by_event_heat(
+            active["meet_id"], xml_data.get("event_number"), heat_number,
+            file_time, fn, filename, xml_data
+        )
+
+    if not matched_id:
+        dataset = int(fn["meet_num"]) if fn.get("meet_num") else None
+        matched_id = _match_dolphin_to_cts(
+            fn["dolphin_race_num"], dataset, fn.get("machine_id"),
+            file_time, filename, xml_data, source_format="dolphin5_xml"
+        )
+
+    if matched_id:
+        _log_ingestion(filename, "dolphin5", fn.get("machine_id"), file_time, "matched")
+        return {"status": "matched", "race_log_id": matched_id}
+    else:
+        fn_for_pending = dict(fn)
+        fn_for_pending["file_time"] = file_time
+        fn_for_pending["dolphin_dataset"] = int(fn["meet_num"]) if fn.get("meet_num") else None
+        # Only the watch-times subset is JSON-safe for pending_dolphin's raw_data
+        # blob (_add_pending_dolphin serializes the whole dict) -- xml_data also
+        # carries a datetime (precise_time), which json.dumps can't handle.
+        watch_only = {"watch_a": xml_data["watch_a"], "watch_b": xml_data["watch_b"], "watch_c": xml_data["watch_c"]}
+        _add_pending_dolphin(fn_for_pending, filename, watch_only, source_format="dolphin5_xml")
+        _log_ingestion(filename, "dolphin5", fn.get("machine_id"), file_time, "pending", "No CTS match found")
         return {"status": "pending", "message": "Saved to pending"}
 
 
@@ -922,17 +1049,17 @@ def _add_pending_gen(gen_data, race_num, file_time, filename):
         )
 
 
-def _add_pending_dolphin(fn, filename, dolphin_data=None):
+def _add_pending_dolphin(fn, filename, dolphin_data=None, source_format="do3"):
     ft = fn["file_time"].isoformat() if fn["file_time"] else None
     raw = json.dumps(dolphin_data) if dolphin_data else None
     with get_write_conn() as conn:
         conn.execute(
-            "INSERT INTO pending_dolphin (dolphin_race_num,dolphin_dataset,file_time,source_machine,filename,raw_data) VALUES (?,?,?,?,?,?)",
-            (fn["dolphin_race_num"], fn.get("dolphin_dataset"), ft, fn.get("machine_id"), filename, raw)
+            "INSERT INTO pending_dolphin (dolphin_race_num,dolphin_dataset,file_time,source_machine,filename,raw_data,dolphin_source_format) VALUES (?,?,?,?,?,?,?)",
+            (fn["dolphin_race_num"], fn.get("dolphin_dataset"), ft, fn.get("machine_id"), filename, raw, source_format)
         )
 
 
-def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_time, filename, dolphin_data=None):
+def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_time, filename, dolphin_data=None, source_format="do3"):
     """Find closest unmatched CTS race_log entry within the time window."""
     window = timedelta(seconds=config.DOLPHIN_MATCH_WINDOW_SECONDS)
     low  = (file_time - window).isoformat()
@@ -959,10 +1086,10 @@ def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_ti
         conn.execute(
             """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
                dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
-               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?
+               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?,dolphin_source_format=?
                WHERE id=?""",
             (dolphin_race_num, dolphin_dataset, ft, machine_id, filename, delta,
-             wa, wb, wc, row["id"])
+             wa, wb, wc, source_format, row["id"])
         )
     log.info(f"Dolphin #{dolphin_race_num} (dataset={dolphin_dataset}) matched to race_log id={row['id']} (Δ{delta:.1f}s)")
     return row["id"]
@@ -995,16 +1122,17 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
     wa = json.dumps(dolphin_data["watch_a"]) if dolphin_data else None
     wb = json.dumps(dolphin_data["watch_b"]) if dolphin_data else None
     wc = json.dumps(dolphin_data["watch_c"]) if dolphin_data else None
+    source_format = pending["dolphin_source_format"] if "dolphin_source_format" in pending.keys() else "do3"
 
     with get_write_conn() as conn:
         conn.execute(
             """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
                dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
-               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?
+               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?,dolphin_source_format=?
                WHERE id=?""",
             (pending["dolphin_race_num"], pending["dolphin_dataset"], pending["file_time"],
              pending["source_machine"], pending["filename"], delta,
-             wa, wb, wc, race_log_id)
+             wa, wb, wc, source_format, race_log_id)
         )
         conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))
 
