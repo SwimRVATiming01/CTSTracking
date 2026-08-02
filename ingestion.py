@@ -763,7 +763,7 @@ def _apply_session_map(events, meet_id, filename):
     with get_write_conn() as conn:
         for event_id, info in events.items():
             cur = conn.execute(
-                "UPDATE schedule SET session=? WHERE meet_id=? AND event_id=?",
+                "UPDATE schedule SET session=?, session_report_imported_at=datetime('now') WHERE meet_id=? AND event_id=?",
                 (info["session"], meet_id, event_id)
             )
             if cur.rowcount > 0:

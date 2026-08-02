@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS schedule (
     heat_order       INTEGER,
     override_start   TEXT,
     session_report_start TEXT,
+    session_report_imported_at TEXT,
     imported_at      TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(meet_id, session, event_id, heat)
 );
@@ -217,6 +218,7 @@ def init_db():
             "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
             "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
             "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
+            "ALTER TABLE schedule ADD COLUMN session_report_imported_at TEXT",
         ]:
             try:
                 conn.execute(sql)
@@ -502,6 +504,7 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                 "ALTER TABLE schedule ADD COLUMN session_report_start TEXT",
                 "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
                 "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
+                "ALTER TABLE schedule ADD COLUMN session_report_imported_at TEXT",
             ]:
                 try:
                     conn.execute(sql)
@@ -784,15 +787,41 @@ def _checklist_seed():
         {"label": "Schedule imported for active meet", "category": "auto",
          "checker_type": "schedule_imported",
          "checker_params": "{}", "sort_order": 20},
+        {"label": "Session report imported (optional)", "category": "auto",
+         "checker_type": "session_report_imported",
+         "checker_params": "{}", "sort_order": 25},
         {"label": "Bitfocus Companion connected", "category": "auto",
          "checker_type": "companion_connected",
          "checker_params": "{}", "sort_order": 30},
-        {"label": "Timing machine client reporting in", "category": "auto",
-         "checker_type": "client_heartbeat",
-         "checker_params": json.dumps({"max_age_seconds": 120}), "sort_order": 40},
+        {"label": "Timing machine clients", "category": "auto",
+         "checker_type": "timing_clients",
+         "checker_params": "{}", "sort_order": 40},
+        {"label": "Dolphin5 TCP control", "category": "auto",
+         "checker_type": "dolphin5_connected",
+         "checker_params": "{}", "sort_order": 45},
+        {"label": "Dolphin Meet Manager open", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 46},
+        {"label": "Meet Mobile off", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 47},
+        {"label": "Correct Dolphin dataset selected", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 48},
+        {"label": "Vicreo running (Gen7)", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 49},
+        {"label": "Vicreo running (Meet Manager)", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 50},
+        {"label": "Gen7 AHK scripts deployed and running (automation work in progress)",
+         "category": "manual", "checker_type": None, "checker_params": None,
+         "sort_order": 51},
+        {"label": "Meet Manager AHK scripts deployed and running (automation work in progress)",
+         "category": "manual", "checker_type": None, "checker_params": None,
+         "sort_order": 52},
+        {"label": "Streamline: correct config selected", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 53},
+        {"label": "GEN7 software settings configured", "category": "manual",
+         "checker_type": None, "checker_params": None, "sort_order": 54},
         {"label": "Physical walkthrough complete (pads, watches, printer, etc.)",
          "category": "manual", "checker_type": None, "checker_params": None,
-         "sort_order": 50},
+         "sort_order": 55},
     ]
 
 

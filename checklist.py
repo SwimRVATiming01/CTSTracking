@@ -18,6 +18,7 @@ import re
 from datetime import datetime
 
 import database
+import dolphin5_control
 
 log = logging.getLogger("cts_tracker")
 
@@ -77,17 +78,70 @@ def _check_companion_connected(params, context):
     return ok, ("Connected" if ok else "No Companion contact yet")
 
 
-def _check_client_heartbeat(params, context):
-    count = context.get("client_online_count", 0)
-    ok = count > 0
-    return ok, (f"{count} client(s) online" if ok else "No clients reporting in")
+def _check_timing_clients(params, context):
+    clients = context.get("clients", [])
+    if not clients:
+        return False, "No clients reporting in"
+    lines = []
+    any_online = False
+    for c in clients:
+        any_online = any_online or c["online"]
+        line = f"{c['machine_id']}: {'online' if c['online'] else 'OFFLINE'}, last seen {c['last_seen']}"
+        problems = []
+        if c.get("share_ok") is False:
+            problems.append("share unreachable")
+        if c.get("dolphin_ok") is False:
+            problems.append("no Dolphin folder")
+        if c.get("cts_ok") is False:
+            problems.append("no CTS folder")
+        if c.get("vicreo_running") is False:
+            problems.append("Vicreo not running")
+        if problems:
+            line += f" ({', '.join(problems)})"
+        lines.append(line)
+    return any_online, "\n".join(lines)
+
+
+def _check_session_report_imported(params, context):
+    """Optional -- a meet always gets its schedule from the Meet Program,
+    but a Session Report may or may not also be ingested. Unlike
+    _check_schedule_imported, no Session Report is not a failure (ok=None,
+    i.e. "no data yet" rather than red)."""
+    meet = context.get("meet")
+    if not meet:
+        return None, "No active meet"
+    rows = database.get_schedule(meet["meet_id"])
+    times = [r["session_report_imported_at"] for r in rows if r.get("session_report_imported_at")]
+    if not times:
+        return None, "No session report ingested (optional)"
+    return True, f"Session report last ingested {_time_ago(max(times))}"
+
+
+def _check_dolphin5_connected(params, context):
+    if not dolphin5_control.is_running():
+        return False, "TCP control not started"
+    lines = []
+    any_connected = False
+    for pool in (1, 2):
+        cfg = dolphin5_control.get_effective_config(pool)
+        if not cfg.get("host"):
+            lines.append(f"Pool {pool}: not configured")
+            continue
+        status = dolphin5_control.get_connection_status(pool)
+        connected = bool(status.get("connected"))
+        any_connected = any_connected or connected
+        state = "connected" if connected else "not connected"
+        lines.append(f"Pool {pool}: {state} ({cfg['host']}:{cfg['port']})")
+    return any_connected, "\n".join(lines)
 
 
 CHECKERS = {
     "path_reachable":      _check_path_reachable,
     "schedule_imported":   _check_schedule_imported,
+    "session_report_imported": _check_session_report_imported,
     "companion_connected": _check_companion_connected,
-    "client_heartbeat":    _check_client_heartbeat,
+    "timing_clients":      _check_timing_clients,
+    "dolphin5_connected":  _check_dolphin5_connected,
 }
 
 
