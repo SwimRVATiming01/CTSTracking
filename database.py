@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 import config
+import companion_state
 
 log = logging.getLogger("cts_tracker")
 
@@ -642,13 +643,44 @@ def get_full_log(meet_id, db_path=None):
 
 def get_current_heat_state(meet_id):
     """
-    Return current heat and next-heat state for each pool.
-    Used by Bitfocus Companion endpoints.
+    Return current heat and next-heat state for each pool. Used by
+    Bitfocus Companion endpoints and dolphin5_control's chase-GEN7 loop.
+
+    Per pool: prefer Companion's own posted event/heat
+    (companion_state.get_fresh) if it's been posted recently enough to
+    trust -- raw pass-through, no schedule-row match required, since the
+    whole point is to follow GEN7 even when it's off the printed schedule.
+    Falls back to the next scheduled heat after the last one GEN7 has
+    actually finished and filed (is_current_p1/p2, schedule-order-based)
+    when Companion hasn't posted anything fresh -- NOT the last-finished
+    heat itself (is_last_p1/p2), which lags whatever's actually happening
+    right now by one race.
     """
     rows = get_race_dashboard(meet_id)
     result = {}
 
-    for pool_num, is_current_key in [(1, "is_last_p1"), (2, "is_last_p2")]:
+    for pool_num in (1, 2):
+        fresh = companion_state.get_fresh(pool_num)
+        if fresh:
+            event_id = fresh["event_id"]
+            event_name = next(
+                (r["event_name"] for r in rows if str(r.get("event_id")) == str(event_id)),
+                None
+            )
+            result[f"pool{pool_num}"] = {
+                "active": True,
+                "current_event": event_id,
+                "current_heat": fresh["heat"],
+                "current_event_name": event_name,
+                "cts_race_num": None,
+                "next_event": None,
+                "next_heat": None,
+                "next_is_new_event": None,
+                "source": "companion",
+            }
+            continue
+
+        is_current_key = "is_current_p1" if pool_num == 1 else "is_current_p2"
         current_row = next((r for r in rows if r.get(is_current_key)), None)
         if not current_row:
             result[f"pool{pool_num}"] = {
@@ -658,6 +690,7 @@ def get_current_heat_state(meet_id):
                 "next_event": None,
                 "next_heat": None,
                 "next_is_new_event": None,
+                "source": "none",
             }
             continue
 
@@ -680,6 +713,7 @@ def get_current_heat_state(meet_id):
                 next_row["event_id"] != current_row["event_id"]
                 if next_row else None
             ),
+            "source": "schedule",
         }
 
     return result

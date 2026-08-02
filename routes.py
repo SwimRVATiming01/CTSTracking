@@ -16,6 +16,7 @@ from flask import Flask, jsonify, render_template_string, request, abort
 import config
 import csv
 import json
+import companion_state
 from version_info import get_git_version
 
 from database import (
@@ -38,10 +39,6 @@ import checklist
 log = logging.getLogger("cts_tracker")
 
 app = Flask(__name__)
-
-# Companion-controlled current heat overrides (None = use auto-detection)
-_companion_p1 = None  # {"event_id": str, "heat": str}
-_companion_p2 = None
 
 # ---------------------------------------------------------------------------
 # CLIENT HEARTBEAT STATE
@@ -2086,7 +2083,9 @@ def api_dashboard():
     rows = get_race_dashboard(meet["meet_id"], session)
 
     # Apply Companion current heat overrides if set
-    if _companion_p1 or _companion_p2:
+    companion_p1 = companion_state.get_raw(1)
+    companion_p2 = companion_state.get_raw(2)
+    if companion_p1 or companion_p2:
         for row in rows:
             row["is_current_p1"] = False
             row["is_current_p2"] = False
@@ -2120,12 +2119,12 @@ def api_dashboard():
                     return event_rows[idx]
             return None
 
-        if _companion_p1:
-            match = _resolve_companion(_companion_p1)
+        if companion_p1:
+            match = _resolve_companion(companion_p1)
             if match:
                 match["is_current_p1"] = True
-        if _companion_p2:
-            match = _resolve_companion(_companion_p2)
+        if companion_p2:
+            match = _resolve_companion(companion_p2)
             if match:
                 match["is_current_p2"] = True
 
@@ -2150,8 +2149,8 @@ def api_dashboard():
         "pending":     get_pending_summary(),
         "final_eta":   _compute_final_eta(rows),
         "session_etas": session_etas,
-        "companion_p1": _companion_p1,
-        "companion_p2": _companion_p2,
+        "companion_p1": companion_p1,
+        "companion_p2": companion_p2,
     })
 
 
@@ -2358,12 +2357,11 @@ def api_companion_set_heat_p1():
     """Set Pool 1 current heat from Bitfocus Companion.
     POST /api/companion/pool1/set_heat?event=$(streamline:event)&heat=$(streamline:heat)
     """
-    global _companion_p1
     event = request.args.get("event")
     heat  = request.args.get("heat")
     if event is None or heat is None:
         return jsonify({"error": "Missing event or heat parameter"}), 400
-    _companion_p1 = {"event_id": event, "heat": heat}
+    companion_state.set_heat(1, event, heat)
     log.info(f"Companion P1 heat set: Event={event} Heat={heat}")
     return jsonify({"status": "ok", "pool": 1, "event_id": event, "heat": heat})
 
@@ -2371,8 +2369,7 @@ def api_companion_set_heat_p1():
 @app.route("/api/companion/pool1/clear_heat", methods=["POST"])
 def api_companion_clear_heat_p1():
     """Clear Pool 1 Companion override — reverts to auto-detection."""
-    global _companion_p1
-    _companion_p1 = None
+    companion_state.clear_heat(1)
     log.info("Companion P1 heat override cleared")
     return jsonify({"status": "ok", "pool": 1})
 
@@ -2382,7 +2379,6 @@ def api_companion_set_heat_p2():
     """Set Pool 2 current heat from Bitfocus Companion.
     POST /api/companion/pool2/set_heat?event=$(streamline_2:event)&heat=$(streamline_2:heat)
     """
-    global _companion_p2
     event = request.args.get("event")
     heat  = request.args.get("heat")
     if event is None or heat is None:
@@ -2392,7 +2388,7 @@ def api_companion_set_heat_p2():
         # heat, so ignore it rather than letting it force the Pool 2 block visible.
         log.info(f"Companion P2 heat set ignored (unresolved $NA): Event={event} Heat={heat}")
         return jsonify({"status": "ignored", "reason": "unresolved $NA"}), 200
-    _companion_p2 = {"event_id": event, "heat": heat}
+    companion_state.set_heat(2, event, heat)
     log.info(f"Companion P2 heat set: Event={event} Heat={heat}")
     return jsonify({"status": "ok", "pool": 2, "event_id": event, "heat": heat})
 
@@ -2400,8 +2396,7 @@ def api_companion_set_heat_p2():
 @app.route("/api/companion/pool2/clear_heat", methods=["POST"])
 def api_companion_clear_heat_p2():
     """Clear Pool 2 Companion override — reverts to auto-detection."""
-    global _companion_p2
-    _companion_p2 = None
+    companion_state.clear_heat(2)
     log.info("Companion P2 heat override cleared")
     return jsonify({"status": "ok", "pool": 2})
 
@@ -2638,7 +2633,7 @@ def api_checklist():
     items = get_checklist_items()
     context = {
         "meet": meet,
-        "companion_connected": bool(_companion_p1 or _companion_p2),
+        "companion_connected": bool(companion_state.get_raw(1) or companion_state.get_raw(2)),
         "clients": _client_rows(),
     }
     items = checklist.evaluate_items(items, context)
