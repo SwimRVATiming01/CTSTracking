@@ -495,7 +495,7 @@ def _match_dolphin5_by_event_heat(meet_id, event_number, heat_number, file_time,
     return row["id"]
 
 
-def ingest_dolphin5_file(filepath):
+def ingest_dolphin5_file(filepath, machine_id_hint=None):
     """
     Full Dolphin5 XML ingestion pipeline.
 
@@ -503,10 +503,21 @@ def ingest_dolphin5_file(filepath):
     first: an exact (event, heat) match sourced only from the XML file's own
     content (_match_dolphin5_by_event_heat) before falling back to the
     existing time-window correlation shared with .do3/.gen.
+
+    machine_id_hint: Dolphin5 writes directly to the network share with no
+    client.py relay step, so its filenames never carry an embedded machine
+    ID the way .do3's client.py-relayed names do. watchdog_monitor.py
+    derives this instead from the file's parent subfolder (each physical
+    Dolphin5 unit gets its own machine-named subfolder under WATCH_DIR —
+    see _folder_machine_id) and passes it through here purely for the
+    dolphin_source_machine diagnostic column. Only used when the filename
+    itself didn't already parse one.
     """
     filename = os.path.basename(filepath)
     _backup_raw_file(filepath, "dolphin5")
     fn = parse_dolphin5_xml_filename(filename)
+    if not fn.get("machine_id") and machine_id_hint:
+        fn["machine_id"] = machine_id_hint
 
     if fn["dolphin_race_num"] is None:
         msg = "Could not extract race number"

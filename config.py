@@ -51,6 +51,14 @@ SCHEDULE_EXTENSION = ".csv"
 # Flip back to True any time to resume .oxps ingestion, no other changes needed.
 INGEST_CTS_ENABLED = False
 
+# TEMPORARILY False (2026-08-02): this instance is a disposable shadow test
+# of the Dolphin5 XML/TCP feature, running alongside the real production
+# server while the live meet is still officially on Dolphin4. Don't want
+# this test instance also ingesting real Dolphin4 .do3 traffic from the live
+# meet. Flip back to True (or remove) once this stops being a throwaway test
+# run -- this is not meant to be a permanent toggle like INGEST_CTS_ENABLED.
+INGEST_DOLPHIN_ENABLED = False
+
 # ---------------------------------------------------------------------------
 # DOLPHIN CORRELATION
 # ---------------------------------------------------------------------------
