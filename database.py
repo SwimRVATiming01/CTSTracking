@@ -186,6 +186,13 @@ CREATE TABLE IF NOT EXISTS checklist_notes (
     note_text   TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS dolphin5_config (
+    pool_num    INTEGER PRIMARY KEY,
+    host        TEXT,
+    port        INTEGER,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -859,6 +866,33 @@ def delete_checklist_note(note_id):
     with get_write_conn() as conn:
         result = conn.execute("DELETE FROM checklist_notes WHERE id=?", (note_id,))
     return result.rowcount > 0
+
+
+# ===========================================================================
+# DOLPHIN5 CONNECTION CONFIG
+# ===========================================================================
+# Persists the host/port set from the dashboard for each pool's Dolphin5
+# unit, so it survives a server restart instead of reverting to whatever's
+# hardcoded (unlike obs_control's in-memory-only config) — Pool 2's unit in
+# particular isn't reliably the same physical machine meet to meet, so
+# there's no sensible hardcoded default to fall back to.
+
+def get_dolphin5_configs():
+    """Return {pool_num: {"host":.., "port":..}} for whatever's been saved."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT pool_num, host, port FROM dolphin5_config").fetchall()
+    return {r["pool_num"]: {"host": r["host"], "port": r["port"]} for r in rows}
+
+
+def save_dolphin5_config(pool_num, host=None, port=None):
+    with get_write_conn() as conn:
+        conn.execute(
+            """INSERT INTO dolphin5_config (pool_num, host, port, updated_at)
+               VALUES (?,?,?,datetime('now'))
+               ON CONFLICT(pool_num)
+               DO UPDATE SET host=excluded.host, port=excluded.port, updated_at=excluded.updated_at""",
+            (pool_num, host, port)
+        )
 
 
 # ===========================================================================

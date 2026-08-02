@@ -49,10 +49,11 @@ CTS_WATCH_FOLDER = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser
 # Dolphin software always saves .do3 files here
 DOLPHIN_WATCH_FOLDER = r"C:\CTSDolphin"
 
-# Dolphin5 software saves .xml result files here. PLACEHOLDER PATH -- confirm
-# the real folder with the venue before deploying; this is deliberately NOT
-# C:\Users\GEN7-TIMING-02\Documents\CTS, which is only the test rig's folder.
-DOLPHIN5_WATCH_FOLDER = r"C:\CTSDolphin5"
+# NOTE: Dolphin5 is NOT relayed by client.py. Confirmed live 2026-08-02 that
+# Dolphin5 writes its .xml files directly to the network share itself (each
+# unit's own machine-named subfolder under WATCH_DIR) -- see
+# watchdog_monitor.py's recursive watch. Do not add a Dolphin5 watch folder
+# here; there is no local folder on a client.py-managed machine to watch.
 
 # Network path to server watch folder — same on every client machine
 SERVER_WATCH_FOLDER = r"\\CSAC-001\swmeets8\racenumbers"
@@ -226,7 +227,6 @@ def _gather_status():
     vicreo_running = None
     share_ok       = None
     dolphin_ok     = os.path.isdir(DOLPHIN_WATCH_FOLDER)
-    dolphin5_ok    = os.path.isdir(DOLPHIN5_WATCH_FOLDER)
     cts_ok         = os.path.isdir(CTS_WATCH_FOLDER)
 
     if _PSUTIL:
@@ -260,7 +260,6 @@ def _gather_status():
         "vicreo_running": vicreo_running,
         "share_ok":       share_ok,
         "dolphin_ok":     dolphin_ok,
-        "dolphin5_ok":    dolphin5_ok,
         "cts_ok":         cts_ok,
     }
 
@@ -303,7 +302,7 @@ def _heartbeat_loop():
 # WATCHDOG
 # ===========================================================================
 
-WATCHED_EXTENSIONS = {".oxps", ".do3", ".xml"}
+WATCHED_EXTENSIONS = {".oxps", ".do3"}
 
 
 class ForwardHandler(FileSystemEventHandler):
@@ -418,7 +417,6 @@ if __name__ == "__main__":
     log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
     log.info(f"  CTS folder:  {CTS_WATCH_FOLDER}")
     log.info(f"  Dolphin folder: {DOLPHIN_WATCH_FOLDER}")
-    log.info(f"  Dolphin5 folder: {DOLPHIN5_WATCH_FOLDER}")
     log.info(f"  Forwarding:  {SERVER_WATCH_FOLDER}")
     log.info("=" * 50)
 
@@ -441,7 +439,6 @@ if __name__ == "__main__":
 
     _watch_folder_with_retry(observer, handler, CTS_WATCH_FOLDER, "CTS")
     _watch_folder_with_retry(observer, handler, DOLPHIN_WATCH_FOLDER, "Dolphin")
-    _watch_folder_with_retry(observer, handler, DOLPHIN5_WATCH_FOLDER, "Dolphin5")
 
     log.info("Watching for files... (Ctrl+C to stop)")
 

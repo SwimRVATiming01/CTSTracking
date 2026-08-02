@@ -34,6 +34,7 @@ import threading
 import time
 
 import config
+import database
 from database import get_active_meet, get_current_heat_state
 
 log = logging.getLogger("cts_tracker")
@@ -50,6 +51,8 @@ _state_lock = threading.Lock()
 _connections = {}        # pool_num -> live _Dolphin5Connection
 _connections_lock = threading.Lock()
 _stop_event = threading.Event()
+_started = False
+_started_lock = threading.Lock()
 
 
 class _Dolphin5Connection:
@@ -118,19 +121,27 @@ def _init_state(pool_num):
             "last_sent_heat": None,
             "last_seen_event_index": None,
             "last_seen_event_number": None,
+            "last_message": None,
+            "last_message_at": None,
         }
 
 
 def _on_message(pool_num, text):
     """
-    Observational only: track both the event index this module last sent
-    via setEventAndHeat (recorded in _send_set_event_and_heat) and the
-    event number seen in any incoming CurrentEventAndHeat push — a field
-    that carries a real eventNumber over the wire even though it's never
-    written into the logged XML file. Purely diagnostic, exposed via
-    get_connection_status() so behavior can be watched during a live meet;
-    never wired into any matching decision.
+    Track every raw line received (for the dashboard's "last TCP response"
+    display, regardless of type), plus — observational only — both the
+    event index this module last sent via setEventAndHeat (recorded in
+    _send_set_event_and_heat) and the event number seen in any incoming
+    CurrentEventAndHeat push, a field that carries a real eventNumber over
+    the wire even though it's never written into the logged XML file.
+    Purely diagnostic, exposed via get_connection_status() so behavior can
+    be watched during a live meet; never wired into any matching decision.
     """
+    with _state_lock:
+        st = _state[pool_num]
+        st["last_message"] = text
+        st["last_message_at"] = time.time()
+
     m = _CURRENT_EVENT_AND_HEAT_RE.match(text)
     if not m:
         return
@@ -142,10 +153,59 @@ def _on_message(pool_num, text):
     log.debug(f"Dolphin5 pool {pool_num} push: index={event_index!r} number={event_number!r}")
 
 
-def _connection_supervisor(pool_num, cfg):
+def _effective_config(pool_num):
+    """
+    Merge the dashboard-saved config (database.dolphin5_config, if any) over
+    config.DOLPHIN5_CONFIGS' hardcoded fallback. Queried fresh on every
+    connection attempt rather than cached, so a dashboard Save takes effect
+    without needing a restart -- see force_reconnect for making that happen
+    immediately even for an already-connected pool.
+    """
+    base = dict(config.DOLPHIN5_CONFIGS.get(pool_num, {}))
+    try:
+        saved = database.get_dolphin5_configs().get(pool_num, {})
+    except Exception:
+        saved = {}
+    if saved.get("host"):
+        base["host"] = saved["host"]
+    if saved.get("port"):
+        base["port"] = saved["port"]
+    return base
+
+
+def get_effective_config(pool_num):
+    """Public wrapper for the dashboard to display the current host/port."""
+    return _effective_config(pool_num)
+
+
+def update_config(pool_num, host=None, port=None):
+    """Persist a dashboard-saved host/port for one pool and reconnect it
+    immediately with the new value, rather than waiting for its next
+    natural disconnect."""
+    database.save_dolphin5_config(pool_num, host, port)
+    force_reconnect(pool_num)
+
+
+def force_reconnect(pool_num):
+    """Close a pool's current connection (if any) so its supervisor loop
+    immediately retries with whatever config is now in effect."""
+    with _connections_lock:
+        conn = _connections.get(pool_num)
+    if conn:
+        conn.close()
+
+
+def _connection_supervisor(pool_num):
     """Keep exactly one connection alive per pool, reconnecting on drop."""
     while not _stop_event.is_set():
-        conn = _Dolphin5Connection(pool_num, cfg["host"], cfg["port"], on_message=_on_message)
+        cfg = _effective_config(pool_num)
+        host, port = cfg.get("host"), cfg.get("port")
+        if not host or not port:
+            log.debug(f"Dolphin5 pool {pool_num}: no host/port configured yet, waiting")
+            time.sleep(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
+            continue
+
+        conn = _Dolphin5Connection(pool_num, host, port, on_message=_on_message)
         try:
             conn.connect()
             conn.send("autoSendUpdates,ON")
@@ -161,7 +221,7 @@ def _connection_supervisor(pool_num, cfg):
             _connections[pool_num] = conn
         with _state_lock:
             _state[pool_num]["connected"] = True
-        log.info(f"Dolphin5 pool {pool_num}: connected to {cfg['host']}:{cfg['port']}")
+        log.info(f"Dolphin5 pool {pool_num}: connected to {host}:{port}")
 
         while conn.is_connected() and not _stop_event.is_set():
             time.sleep(0.5)
@@ -177,6 +237,9 @@ def _connection_supervisor(pool_num, cfg):
             time.sleep(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
 
 
+_warned_disconnected = set()  # pool_nums already warned about, until reconnected -- logging noise reduction only, no correctness impact if this races
+
+
 def _send_set_event_and_heat(pool_num, event_id, heat):
     """
     The only command this module constructs and sends besides
@@ -187,8 +250,17 @@ def _send_set_event_and_heat(pool_num, event_id, heat):
     with _connections_lock:
         conn = _connections.get(pool_num)
     if not conn or not conn.is_connected():
-        log.warning(f"Dolphin5 pool {pool_num}: chase send skipped, not connected")
+        # The chase loop retries every poll tick while disconnected (so it
+        # fires immediately once reconnected) -- log the first occurrence at
+        # WARNING, then drop to debug so a stretch of downtime doesn't spam
+        # one warning line every DOLPHIN5_POLL_INTERVAL_SECONDS.
+        if pool_num not in _warned_disconnected:
+            log.warning(f"Dolphin5 pool {pool_num}: chase send skipped, not connected")
+            _warned_disconnected.add(pool_num)
+        else:
+            log.debug(f"Dolphin5 pool {pool_num}: chase send skipped, still not connected")
         return False
+    _warned_disconnected.discard(pool_num)
 
     try:
         event_int = int(event_id)
@@ -254,18 +326,34 @@ def _chase_loop():
         time.sleep(config.DOLPHIN5_POLL_INTERVAL_SECONDS)
 
 
+def is_running():
+    """Whether start() has been called yet this process (idempotent check)."""
+    return _started
+
+
 def start():
     """
     Start one persistent connection per pool plus the chase-loop thread.
 
-    Called explicitly and config-gated from cts_tracker.py — not an
-    import-time auto-start — since this is the one module that writes to
-    live hardware the moment it runs; an implicit auto-start would make
-    that side effect invisible to anyone reading the startup sequence.
+    Called explicitly — either config-gated at boot from cts_tracker.py, or
+    on demand via the dashboard's Dolphin5 panel (see routes.py) so TCP
+    control can be turned on for a running session without a full server
+    restart. Not an import-time auto-start either way — this is the one
+    module that writes to live hardware the moment it runs; an implicit
+    auto-start would make that side effect invisible to anyone reading the
+    startup sequence. Idempotent: safe to call more than once (e.g. a
+    dashboard button clicked twice) — only the first call does anything.
     """
-    for pool_num, cfg in config.DOLPHIN5_CONFIGS.items():
+    global _started
+    with _started_lock:
+        if _started:
+            log.info("Dolphin5 control start() called again, already running — ignoring")
+            return
+        _started = True
+
+    for pool_num in config.DOLPHIN5_CONFIGS:
         _init_state(pool_num)
-        threading.Thread(target=_connection_supervisor, args=(pool_num, cfg), daemon=True).start()
+        threading.Thread(target=_connection_supervisor, args=(pool_num,), daemon=True).start()
     threading.Thread(target=_chase_loop, daemon=True).start()
     log.info("Dolphin5 control started (chase-GEN7 TCP control)")
 

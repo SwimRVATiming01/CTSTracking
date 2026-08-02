@@ -335,6 +335,14 @@ DASHBOARD_HTML = """
     .obs-dot.off  { background:#444; }
     .obs-dot.live { background:#e94560; }
     .obs-msg { font-size:11px; min-height:15px; margin-top:6px; }
+
+    /* Dolphin5 View -- reuses .obs-* structural classes above */
+    #btn-dolphin5 { background:#1a3a3a; color:#6bffe0; margin-left:0; }
+    #btn-dolphin5.active { background:#6bffe0; color:#0d1117; }
+    #dolphin5-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
+    .dolphin5-last-msg { font-family:monospace; font-size:11px; color:#a0c4ff;
+                          background:#0f3460; border-radius:3px; padding:5px 8px;
+                          margin-top:6px; word-break:break-all; }
   </style>
 </head>
 <body>
@@ -435,6 +443,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-clients"   onclick="setView('clients')">Clients</button>
     <button class="view-btn" id="btn-checklist" onclick="setView('checklist')">Checklist</button>
     <button class="view-btn" id="btn-obs"      onclick="setView('obs')">OBS</button>
+    <button class="view-btn" id="btn-dolphin5" onclick="setView('dolphin5')">Dolphin5</button>
     <button class="view-btn" id="btn-settings" onclick="setView('settings')">Settings</button>
     <button class="view-btn" id="btn-add-heat" onclick="openAddHeat()" style="background:#1a3a1a;color:#6bff6b;">+ Add Heat</button>
     <button class="view-btn" id="btn-restart"  onclick="restartServer()">Restart Server</button>
@@ -741,6 +750,73 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Dolphin5 View -->
+<div class="container" id="dolphin5-view" style="display:none">
+  <div style="padding:14px;">
+    <div class="obs-row" style="margin-bottom:12px;">
+      <button class="obs-btn obs-btn-start" onclick="dolphin5Start()">&#9654; Start TCP Control</button>
+      <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;">Not started this session</span>
+    </div>
+    <div style="font-size:11px;color:#888;margin-bottom:12px;max-width:700px;">
+      Sends <code>setEventAndHeat</code> to each pool's Dolphin5 unit to follow GEN7's real progress.
+      Starting is a one-way switch for this running session (no separate stop) &mdash; restart the
+      server to fully stop it. Nothing is sent until this is started.
+    </div>
+
+    <div class="obs-panels">
+
+      <!-- Pool 1 panel -->
+      <div class="obs-panel">
+        <div class="obs-panel-title">Dolphin5 &mdash; Pool 1</div>
+
+        <div class="obs-section-title" style="margin-top:4px;">CONNECTION</div>
+        <div class="obs-row">
+          <label>Host</label>
+          <input id="dolphin5-1-host" class="obs-input obs-input-mid" type="text" placeholder="e.g. 172.16.0.84">
+          <label>Port</label>
+          <input id="dolphin5-1-port" class="obs-input obs-input-sm" type="number" placeholder="13382">
+          <button class="obs-btn" onclick="dolphin5SaveConfig(1)">Save</button>
+        </div>
+        <div class="obs-status-row">
+          <div class="obs-indicator"><span class="obs-dot off" id="dolphin5-1-conn-dot"></span><span id="dolphin5-1-conn-label" style="color:#888">--</span></div>
+        </div>
+
+        <div class="obs-section-title" style="margin-top:12px;">CHASE STATUS</div>
+        <div class="obs-row"><label>Last sent</label><span id="dolphin5-1-sent" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+        <div class="obs-row"><label>Last seen</label><span id="dolphin5-1-seen" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+        <div class="obs-section-title" style="margin-top:12px;">LAST TCP RESPONSE</div>
+        <div class="dolphin5-last-msg" id="dolphin5-1-last-msg">&#8212;</div>
+        <div style="font-size:10px;color:#555;margin-top:3px;" id="dolphin5-1-last-msg-age"></div>
+      </div>
+
+      <!-- Pool 2 panel -->
+      <div class="obs-panel">
+        <div class="obs-panel-title">Dolphin5 &mdash; Pool 2</div>
+
+        <div class="obs-section-title" style="margin-top:4px;">CONNECTION</div>
+        <div class="obs-row">
+          <label>Host</label>
+          <input id="dolphin5-2-host" class="obs-input obs-input-mid" type="text" placeholder="no default -- varies by meet">
+          <label>Port</label>
+          <input id="dolphin5-2-port" class="obs-input obs-input-sm" type="number" placeholder="13382">
+          <button class="obs-btn" onclick="dolphin5SaveConfig(2)">Save</button>
+        </div>
+        <div class="obs-status-row">
+          <div class="obs-indicator"><span class="obs-dot off" id="dolphin5-2-conn-dot"></span><span id="dolphin5-2-conn-label" style="color:#888">--</span></div>
+        </div>
+
+        <div class="obs-section-title" style="margin-top:12px;">CHASE STATUS</div>
+        <div class="obs-row"><label>Last sent</label><span id="dolphin5-2-sent" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+        <div class="obs-row"><label>Last seen</label><span id="dolphin5-2-seen" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+        <div class="obs-section-title" style="margin-top:12px;">LAST TCP RESPONSE</div>
+        <div class="dolphin5-last-msg" id="dolphin5-2-last-msg">&#8212;</div>
+        <div style="font-size:10px;color:#555;margin-top:3px;" id="dolphin5-2-last-msg-age"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <!-- Full Log View -->
 <div class="container" id="log-view" style="display:none">
   <table>
@@ -851,6 +927,7 @@ function setView(v) {
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
   document.getElementById('obs-view').style.display      = v === 'obs'      ? '' : 'none';
+  document.getElementById('dolphin5-view').style.display = v === 'dolphin5' ? '' : 'none';
   document.getElementById('clients-view').style.display  = v === 'clients'  ? '' : 'none';
   document.getElementById('checklist-view').style.display = v === 'checklist' ? '' : 'none';
   document.getElementById('settings-view').style.display = v === 'settings' ? '' : 'none';
@@ -860,6 +937,7 @@ function setView(v) {
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
   document.getElementById('btn-obs').classList.toggle('active', v === 'obs');
+  document.getElementById('btn-dolphin5').classList.toggle('active', v === 'dolphin5');
   document.getElementById('btn-clients').classList.toggle('active', v === 'clients');
   document.getElementById('btn-checklist').classList.toggle('active', v === 'checklist');
   document.getElementById('btn-settings').classList.toggle('active', v === 'settings');
@@ -868,6 +946,7 @@ function setView(v) {
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
   if (v === 'obs')     loadObsStatus();
+  if (v === 'dolphin5') loadDolphin5Status();
   if (v === 'clients') loadClients();
   if (v === 'checklist') loadChecklist();
   if (v === 'settings') updateScheduleToggleButtons();
@@ -1882,6 +1961,96 @@ function obsCancelSchedule(num) {
 }
 
 // ---------------------------------------------------------------------------
+// DOLPHIN5 CONTROL
+// ---------------------------------------------------------------------------
+
+let dolphin5MsgAgeTimers = { 1: null, 2: null };
+
+function loadDolphin5Status() {
+  fetch('/api/dolphin5/status')
+    .then(r => r.json())
+    .then(data => {
+      const label = document.getElementById('dolphin5-running-label');
+      label.textContent = data.running ? 'Running this session' : 'Not started this session';
+      label.style.color = data.running ? '#6bff6b' : '#888';
+      _renderDolphin5Pool(1, data.pool1, data.configs && data.configs['1']);
+      _renderDolphin5Pool(2, data.pool2, data.configs && data.configs['2']);
+    })
+    .catch(() => {});
+}
+
+function _renderDolphin5Pool(num, status, cfg) {
+  const prefix = 'dolphin5-' + num + '-';
+
+  if (cfg) {
+    const hostEl = document.getElementById(prefix + 'host');
+    const portEl = document.getElementById(prefix + 'port');
+    if (hostEl && !hostEl.dataset.edited) hostEl.value = cfg.host || '';
+    if (portEl && !portEl.dataset.edited) portEl.value = cfg.port || '';
+  }
+
+  const connDot   = document.getElementById(prefix + 'conn-dot');
+  const connLabel = document.getElementById(prefix + 'conn-label');
+  if (!status || !status.connected) {
+    connDot.className     = 'obs-dot off';
+    connLabel.textContent = 'Offline';
+    connLabel.style.color = '#888';
+  } else {
+    connDot.className     = 'obs-dot ok';
+    connLabel.textContent = 'Connected';
+    connLabel.style.color = '#6bff6b';
+  }
+
+  const sentEl = document.getElementById(prefix + 'sent');
+  sentEl.textContent = (status && status.last_sent_event_index != null)
+    ? ('event ' + status.last_sent_event_index + ' / heat ' + status.last_sent_heat)
+    : '—';
+
+  const seenEl = document.getElementById(prefix + 'seen');
+  seenEl.textContent = (status && (status.last_seen_event_index != null || status.last_seen_event_number != null))
+    ? ('index ' + (status.last_seen_event_index || '—') + ' / number ' + (status.last_seen_event_number || '—'))
+    : '—';
+
+  const msgEl = document.getElementById(prefix + 'last-msg');
+  msgEl.textContent = (status && status.last_message) ? status.last_message : '—';
+
+  clearInterval(dolphin5MsgAgeTimers[num]);
+  dolphin5MsgAgeTimers[num] = (status && status.last_message_at)
+    ? startAgeTicker(status.last_message_at, prefix + 'last-msg-age')
+    : null;
+  if (!status || !status.last_message_at) {
+    document.getElementById(prefix + 'last-msg-age').textContent = '';
+  }
+}
+
+// Mark host/port fields as user-edited so auto-populate never overwrites them mid-typing
+['dolphin5-1-host','dolphin5-1-port','dolphin5-2-host','dolphin5-2-port'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', function() { el.dataset.edited = '1'; });
+});
+
+function dolphin5SaveConfig(num) {
+  const host = document.getElementById('dolphin5-' + num + '-host').value.trim();
+  const port = document.getElementById('dolphin5-' + num + '-port').value.trim();
+  const body = {};
+  body['pool' + num] = { host: host, port: port };
+  fetch('/api/dolphin5/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(() => {
+    // Allow auto-populate to reflect the just-saved value again
+    document.getElementById('dolphin5-' + num + '-host').dataset.edited = '';
+    document.getElementById('dolphin5-' + num + '-port').dataset.edited = '';
+    loadDolphin5Status();
+  });
+}
+
+function dolphin5Start() {
+  fetch('/api/dolphin5/start', { method: 'POST' }).then(() => loadDolphin5Status());
+}
+
+// ---------------------------------------------------------------------------
 // POLL
 // ---------------------------------------------------------------------------
 function poll() {
@@ -1891,6 +2060,7 @@ function poll() {
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
   else if (currentView === 'obs')     loadObsStatus();
+  else if (currentView === 'dolphin5') loadDolphin5Status();
   else if (currentView === 'clients') loadClients();
   // history view is not auto-refreshed — it's read-only static data
 }
@@ -2704,3 +2874,41 @@ def api_obs_cancel_schedule():
         return jsonify({"error": "instance must be 1 or 2"}), 400
     obs_control.cancel_schedule(instance)
     return jsonify({"cancelled": True})
+
+
+import dolphin5_control
+
+
+@app.route("/api/dolphin5/status")
+def api_dolphin5_status():
+    """Return connection/chase status + current config for both pools."""
+    return jsonify({
+        "running": dolphin5_control.is_running(),
+        "pool1":   dolphin5_control.get_connection_status(1),
+        "pool2":   dolphin5_control.get_connection_status(2),
+        "configs": {
+            "1": dolphin5_control.get_effective_config(1),
+            "2": dolphin5_control.get_effective_config(2),
+        },
+    })
+
+
+@app.route("/api/dolphin5/config", methods=["POST"])
+def api_dolphin5_config():
+    """Save host/port for one Dolphin5 pool. Persists and reconnects immediately."""
+    data = request.json or {}
+    for i in (1, 2):
+        key = f"pool{i}"
+        if key in data:
+            host = (data[key].get("host") or "").strip() or None
+            port = data[key].get("port")
+            port = int(port) if port not in (None, "") else None
+            dolphin5_control.update_config(i, host=host, port=port)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/dolphin5/start", methods=["POST"])
+def api_dolphin5_start():
+    """Start Dolphin5 TCP control for this running session. Idempotent."""
+    dolphin5_control.start()
+    return jsonify({"running": dolphin5_control.is_running()})
