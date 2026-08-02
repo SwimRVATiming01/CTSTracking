@@ -16,6 +16,7 @@ from flask import Flask, jsonify, render_template_string, request, abort
 import config
 import csv
 import json
+from version_info import get_git_version
 
 from database import (
     get_active_meet, get_all_meets, create_meet, set_active_meet,
@@ -99,6 +100,8 @@ DASHBOARD_HTML = """
              gap: 12px; border-bottom: 2px solid #0f3460; flex-wrap: wrap; }
     header h1 { font-size: 15px; color: #e94560; letter-spacing: 1px; white-space: nowrap; }
     .meet-name { color: #a0c4ff; font-size: 12px; }
+    .version-tag { color: #666; font-size: 10px; margin-left: 6px; }
+    .version-tag.dirty { color: #d4a017; }
     .status-bar { display: flex; gap: 12px; font-size: 11px; margin-left: auto; flex-wrap: wrap; align-items: center; }
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
     .status-pill.warn { background: #8b4000; }
@@ -406,6 +409,7 @@ DASHBOARD_HTML = """
   <header>
     <h1>CTS TRACKER</h1>
     <span class="meet-name" id="meet-name">Loading...</span>
+    <span class="version-tag" id="version-tag"></span>
     <div class="status-bar">
       <div class="pool-block p1" id="block-p1">
         <div class="pool-label">POOL 1</div>
@@ -1903,6 +1907,18 @@ function updateHeaderHeight() {
 updateHeaderHeight();
 window.addEventListener('resize', updateHeaderHeight);
 
+function loadVersion() {
+  fetch('/api/version')
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('version-tag');
+      if (!data.commit) { el.textContent = ''; return; }
+      el.textContent = data.commit + (data.dirty ? ' (uncommitted)' : '');
+      el.classList.toggle('dirty', !!data.dirty);
+    })
+    .catch(() => {});
+}
+
 function initialLoad(attempt) {
   loadDashboard()
     .then(() => updateHeaderHeight())
@@ -1912,6 +1928,7 @@ function initialLoad(attempt) {
     });
 }
 initialLoad();
+loadVersion();
 checkPendingSchedule();
 checkSessionReportNotice();
 updateScheduleToggleButtons();
@@ -1980,6 +1997,11 @@ def dashboard():
 # ===========================================================================
 # ROUTES — API
 # ===========================================================================
+
+@app.route("/api/version")
+def api_version():
+    return jsonify(get_git_version())
+
 
 @app.route("/api/dashboard")
 def api_dashboard():

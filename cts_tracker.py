@@ -17,6 +17,7 @@ import config
 from database import init_db, _snapshot_scheduler
 from watchdog_monitor import start_watchdog
 from routes import app
+from version_info import get_git_version
 
 # ===========================================================================
 # LOGGING
@@ -46,6 +47,11 @@ logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
 if __name__ == "__main__":
     log.info("=" * 60)
     log.info("CTS Tracker starting up")
+    version = get_git_version()
+    if version["commit"]:
+        log.info(f"Running commit {version['commit']}" + (" (uncommitted changes present)" if version["dirty"] else ""))
+    else:
+        log.info("Running commit: unknown (git not available)")
     log.info("=" * 60)
 
     # Initialize database
