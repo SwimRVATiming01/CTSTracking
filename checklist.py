@@ -14,6 +14,8 @@ needs a new function + CHECKERS entry here.
 
 import logging
 import os
+import re
+from datetime import datetime
 
 import database
 
@@ -28,13 +30,46 @@ def _check_path_reachable(params, context):
     return ok, (path if ok else f"{path} not reachable")
 
 
+def _session_label(s):
+    """Strip the redundant "Meet Program - " prefix MM's own session text
+    carries, matching the same display convention already used client-side
+    (routes.py's sessionLabel JS helper)."""
+    if not s:
+        return s
+    stripped = re.sub(r"^Meet Program\s*-?\s*", "", s, flags=re.IGNORECASE).strip()
+    return stripped or s
+
+
+def _time_ago(dt_str):
+    """dt_str is a sqlite datetime('now') value, which is UTC -- must compare
+    against UTC "now" too, not local time, or the delta comes out wrong
+    (negative in timezones behind UTC, permanently showing "just now")."""
+    try:
+        dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return dt_str
+    secs = (datetime.utcnow() - dt).total_seconds()
+    if secs < 60:
+        return "just now"
+    mins = int(secs // 60)
+    if mins < 60:
+        return f"{mins}m ago"
+    hours = mins // 60
+    if hours < 24:
+        return f"{hours}h {mins % 60}m ago"
+    return f"{hours // 24}d ago"
+
+
 def _check_schedule_imported(params, context):
     meet = context.get("meet")
     if not meet:
         return False, "No active meet"
     rows = database.get_schedule(meet["meet_id"])
-    ok = len(rows) > 0
-    return ok, (f"{len(rows)} heats imported" if ok else "No schedule imported yet")
+    if not rows:
+        return False, "No schedule imported yet"
+    sessions = [_session_label(s) for s in database.get_sessions(meet["meet_id"])]
+    last_imported = max(r["imported_at"] for r in rows if r.get("imported_at"))
+    return True, f"{meet['meet_name']}\n{', '.join(sessions)}\nimported {_time_ago(last_imported)}"
 
 
 def _check_companion_connected(params, context):

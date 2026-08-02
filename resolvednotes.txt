@@ -1,0 +1,38 @@
+Resolved checklist notes
+=========================
+Notes originally lived in the dashboard's Checklist "Notes" scratchpad
+(checklist_notes table). Once a note is actually addressed, it's deleted
+from that live list and recorded here instead, so the scratchpad only ever
+shows open items.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:36:48):
+schedule imported for current heat: instead of heats imported display meet
+name, session(s) ingested, and time since last ingest
+
+Resolved 2026-08-02:
+_check_schedule_imported (checklist.py) now shows meet name, ingested
+session name(s), and time since last import -- rendered as separate bullet
+points on the dashboard instead of one line. Along the way: fixed a real
+bug where "time since last import" was permanently stuck on "just now"
+because SQLite's datetime('now') (used for schedule.imported_at) returns
+UTC, but it was being compared against Python's local datetime.now() --
+now compares UTC to UTC. Also added the Checklist tab to the dashboard's
+regular poll loop so these details actually refresh live instead of only
+on tab switch.
+
+-----------------------------------------------------------------------
+
+Original note (2026-07-31 22:37:22):
+bitfouc companion connected: which companion? can we display ip address?
+
+Scratched, not implemented, 2026-08-02:
+Clarified in discussion: this checklist item is specifically about the one
+Streamline-bridging Companion instance (172.16.0.119) -- separate from the
+per-operator Companion instances each timing operator runs for their own
+GEN7/Dolphin control, which CTSTracking doesn't check at all. Considered
+capturing/displaying the source IP on set_heat POSTs as a live sanity
+check, but decided against it: Companion is already reliable about
+auto-booting at startup and interlocking everything, so the extra
+visibility wasn't judged worth building. No code changed.

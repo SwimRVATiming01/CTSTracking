@@ -100,7 +100,7 @@ DASHBOARD_HTML = """
              gap: 12px; border-bottom: 2px solid #0f3460; flex-wrap: wrap; }
     header h1 { font-size: 15px; color: #e94560; letter-spacing: 1px; white-space: nowrap; }
     .meet-name { color: #a0c4ff; font-size: 12px; }
-    .version-tag { color: #666; font-size: 10px; margin-left: 6px; }
+    .version-tag { color: #666; font-size: 10px; }
     .version-tag.dirty { color: #d4a017; }
     .status-bar { display: flex; gap: 12px; font-size: 11px; margin-left: auto; flex-wrap: wrap; align-items: center; }
     .status-pill { background: #0f3460; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
@@ -288,6 +288,7 @@ DASHBOARD_HTML = """
     .cl-dot.ok      { background:#6bff6b; }
     .cl-dot.fail    { background:#ff6b6b; }
     .cl-dot.unknown { background:#444; }
+    .checklist-detail-list { margin:0; padding-left:16px; list-style:disc; }
     .checklist-notes { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; max-width:640px; }
     .checklist-notes-title { font-size:13px; font-weight:bold; color:#6bffb0; margin-bottom:6px; }
     .checklist-note-input { width:100%; min-height:60px; background:#0f3460; border:1px solid #1e2a4a;
@@ -417,7 +418,6 @@ DASHBOARD_HTML = """
   <header>
     <h1>CTS TRACKER</h1>
     <span class="meet-name" id="meet-name">Loading...</span>
-    <span class="version-tag" id="version-tag"></span>
     <div class="status-bar">
       <div class="pool-block p1" id="block-p1">
         <div class="pool-label">POOL 1</div>
@@ -642,6 +642,10 @@ DASHBOARD_HTML = """
   <div class="settings-section">
     <h3>OBS</h3>
     <div class="settings-empty">Nothing here yet.</div>
+  </div>
+  <div class="settings-section">
+    <h3>About</h3>
+    <span class="version-tag" id="version-tag"></span>
   </div>
 </div>
 
@@ -1720,12 +1724,17 @@ function loadChecklist() {
           const label = item.auto_detail || (
             cls === 'unknown' ? 'Unknown' : cls === 'ok' ? 'OK' : 'Failed'
           );
-          status = '<span class="checklist-status"><span class="cl-dot ' + cls + '"></span>' + label + '</span>';
+          const lines = label.split('\\n');
+          const body = lines.length > 1
+            ? '<ul class="checklist-detail-list">' + lines.map(l => '<li>' + escapeHtml(l) + '</li>').join('') + '</ul>'
+            : label;
+          status = '<span class="checklist-status">' +
+            '<span class="cl-dot ' + cls + '"></span>' + body + '</span>';
         }
         return '<tr>' +
           '<td>' + checkbox + '</td>' +
           '<td class="left">' + item.label + manualTag + '</td>' +
-          '<td>' + status + '</td>' +
+          '<td class="left">' + status + '</td>' +
           '</tr>';
       }).join('');
     })
@@ -2062,6 +2071,7 @@ function poll() {
   else if (currentView === 'obs')     loadObsStatus();
   else if (currentView === 'dolphin5') loadDolphin5Status();
   else if (currentView === 'clients') loadClients();
+  else if (currentView === 'checklist') loadChecklist();
   // history view is not auto-refreshed — it's read-only static data
 }
 
