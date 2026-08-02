@@ -1091,7 +1091,7 @@ def _match_dolphin_to_cts(dolphin_race_num, dolphin_dataset, machine_id, file_ti
             (dolphin_race_num, dolphin_dataset, ft, machine_id, filename, delta,
              wa, wb, wc, source_format, row["id"])
         )
-    log.info(f"Dolphin #{dolphin_race_num} (dataset={dolphin_dataset}) matched to race_log id={row['id']} (Δ{delta:.1f}s)")
+    log.info(f"Dolphin #{dolphin_race_num} (dataset={dolphin_dataset}) matched to race_log id={row['id']} (delta {delta:.1f}s)")
     return row["id"]
 
 
@@ -1136,5 +1136,5 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
         )
         conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))
 
-    log.info(f"Retroactive match: pending Dolphin #{pending['dolphin_race_num']} -> race_log id={race_log_id} (Δ{delta:.1f}s)")
+    log.info(f"Retroactive match: pending Dolphin #{pending['dolphin_race_num']} -> race_log id={race_log_id} (delta {delta:.1f}s)")
     return True
