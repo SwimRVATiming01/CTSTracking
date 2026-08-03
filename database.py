@@ -5,6 +5,7 @@ database.py - Database connection, schema, and all query/write functions.
 import csv
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -599,6 +600,214 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             row["cts_gap_flag"] = False
 
     return rows
+
+
+# Per-lane raw time sources harvested for the timing-reliability view --
+# label shown to the recorder, and the race_log column it comes from.
+# GEN7's own .gen file carries the touchpad plus its two backup buttons;
+# Dolphin's .xml/.do3 carries up to three separate backup watches. See
+# [[ctstracking-timing-reliability-analysis]] for the full design context.
+_HARVEST_SOURCE_FIELDS = [
+    ("touchpad",   "off_times"),
+    ("button_a",   "button_a_times"),
+    ("button_b",   "button_b_times"),
+    ("dolphin_a",  "dolphin_watch_a"),
+    ("dolphin_b",  "dolphin_watch_b"),
+    ("dolphin_c",  "dolphin_watch_c"),
+]
+
+# USA Swimming Rule 102.23.4.C(1): a ~0.30s-or-greater gap between the
+# primary system and a backup system is itself one of the listed indicators
+# a malfunction may have occurred. Reused here as the cross-tier divergence
+# threshold for flagging a lane, not just for the primary/pad case the rule
+# describes it for.
+MALFUNCTION_THRESHOLD_SECONDS = 0.30
+
+
+def _resolve_backup_tier(values):
+    """
+    Apply USA Swimming Rule 102.23.4.B's counting logic to however many
+    valid readings exist within one backup tier (GEN7's buttons, or
+    Dolphin's watches -- resolved independently of each other, never mixed
+    into one pool):
+      0 readings -> None (tier has nothing to offer)
+      1 reading  -> that reading (B(4))
+      2 readings -> their average, truncated -- not rounded -- to
+                    hundredths (B(3))
+      3 readings -> if two agree (compared to hundredths precision), that
+                    shared value; otherwise the middle/median value (B(1)/B(2))
+    Not officially defined for more than 3; falls back to the median in
+    that case, which shouldn't occur with today's hardware (max 2 buttons,
+    max 3 Dolphin watches).
+    """
+    n = len(values)
+    if n == 0:
+        return None
+    if n == 1:
+        return values[0]
+    if n == 2:
+        avg = sum(values) / 2
+        return math.floor(avg * 100) / 100
+    rounded = [round(v, 2) for v in values]
+    for v in rounded:
+        if rounded.count(v) >= 2:
+            return v
+    return sorted(values)[len(values) // 2]
+
+
+def _adjudicate_lane(sources):
+    """
+    Rule-based official time for one lane, per USA Swimming Rule 102.23.4 and
+    the automatic > semi-automatic > manual preference order: touchpad wins
+    outright whenever present (102.23.4.A); otherwise the button tier
+    (semi-automatic) is resolved via _resolve_backup_tier and used; otherwise
+    the Dolphin tier (manual) is resolved the same way and used. Whichever
+    tier(s) rank below the one actually used are still resolved and compared
+    against it as a confidence cross-check -- flagged if they diverge by at
+    least MALFUNCTION_THRESHOLD_SECONDS, mirroring 102.23.4.C(1)'s own
+    malfunction indicator, not just applying it to the touchpad-vs-backup
+    case the rule literally describes.
+
+    This is an interim, unofficial interpretation -- not validated against
+    real Meet Manager adjudications yet. See
+    [[ctstracking-timing-reliability-analysis]] for the design history and
+    the explicit plan to revisit if it disagrees with Meet Manager in
+    practice.
+    """
+    touchpad = sources.get("touchpad")
+    button_tier = _resolve_backup_tier([sources[k] for k in ("button_a", "button_b") if k in sources])
+    dolphin_tier = _resolve_backup_tier(
+        [sources[k] for k in ("dolphin_a", "dolphin_b", "dolphin_c") if k in sources]
+    )
+
+    if touchpad is not None:
+        official_time, official_source = touchpad, "touchpad"
+    elif button_tier is not None:
+        official_time, official_source = button_tier, "buttons"
+    elif dolphin_tier is not None:
+        official_time, official_source = dolphin_tier, "dolphin"
+    else:
+        official_time, official_source = None, None
+
+    flags = []
+    if official_source == "touchpad":
+        if button_tier is not None and abs(official_time - button_tier) >= MALFUNCTION_THRESHOLD_SECONDS:
+            flags.append(f"touchpad vs buttons differ by {abs(official_time - button_tier):.2f}s")
+        if dolphin_tier is not None and abs(official_time - dolphin_tier) >= MALFUNCTION_THRESHOLD_SECONDS:
+            flags.append(f"touchpad vs Dolphin differ by {abs(official_time - dolphin_tier):.2f}s")
+    elif official_source == "buttons":
+        if dolphin_tier is not None and abs(official_time - dolphin_tier) >= MALFUNCTION_THRESHOLD_SECONDS:
+            flags.append(f"buttons vs Dolphin differ by {abs(official_time - dolphin_tier):.2f}s")
+
+    return {
+        "official_time":   official_time,
+        "official_source": official_source,
+        "button_tier_time":  button_tier,
+        "dolphin_tier_time": dolphin_tier,
+        "flagged": bool(flags),
+        "flags":   flags,
+    }
+
+
+def get_harvested_times(meet_id, session=None):
+    """
+    Per-lane raw times from every ingested source, for the timing-reliability
+    view -- an interim confidence indicator (average of whatever's available
+    per lane, plus each source's deviation from that average) standing in
+    for real adjudication rules, which haven't been defined yet. Not a
+    pass/fail: no tolerance/threshold is applied here, that's exactly the
+    part still pending a rulebook check.
+
+    Reuses get_race_dashboard's schedule-to-race_log join (prefer 'gen'
+    source, then highest cts_race_num, per schedule row) so this reports
+    on the same "official" race per heat the main dashboard shows.
+    """
+    query = """
+        SELECT
+            s.event_id, s.event_name, s.heat, s.heat_label, s.heat_order, s.session,
+            r.id AS race_log_id, r.round, r.cts_race_num,
+            r.off_times, r.button_a_times, r.button_b_times,
+            r.dolphin_watch_a, r.dolphin_watch_b, r.dolphin_watch_c
+        FROM schedule s
+        LEFT JOIN race_log r
+            ON r.meet_id = s.meet_id
+            AND r.event_id = s.event_id
+            AND r.heat = s.heat
+            AND r.id = (
+                SELECT id FROM race_log rl
+                WHERE rl.meet_id = s.meet_id
+                AND rl.event_id = s.event_id
+                AND rl.heat = s.heat
+                ORDER BY
+                    CASE WHEN rl.source = 'gen' THEN 0 ELSE 1 END,
+                    rl.cts_race_num DESC
+                LIMIT 1
+            )
+        WHERE s.meet_id=?
+    """
+    params = [meet_id]
+    if session:
+        query += " AND s.session=?"
+        params.append(session)
+    query += " ORDER BY CAST(s.session AS INTEGER) ASC, s.heat_order ASC"
+
+    with get_conn() as conn:
+        sched_rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    result = []
+    for row in sched_rows:
+        if row["race_log_id"] is None:
+            continue  # nothing ingested for this heat yet
+
+        decoded = {}
+        for label, col in _HARVEST_SOURCE_FIELDS:
+            raw = row.get(col)
+            try:
+                decoded[label] = json.loads(raw) if raw else [None] * 8
+            except (TypeError, ValueError):
+                decoded[label] = [None] * 8
+
+        for lane_idx in range(8):
+            sources = {}
+            for label, _col in _HARVEST_SOURCE_FIELDS:
+                vals = decoded[label]
+                val = vals[lane_idx] if lane_idx < len(vals) else None
+                if val is None:
+                    continue
+                # Every parser (.gen, .do3, .xml) stores these as raw stripped
+                # strings, never cast to float -- sum()'s int(0) accumulator
+                # blows up on the first one otherwise.
+                try:
+                    sources[label] = float(val)
+                except (TypeError, ValueError):
+                    log.warning(f"Harvested times: non-numeric {label}={val!r}, skipping")
+            if not sources:
+                continue
+
+            average = sum(sources.values()) / len(sources)
+            deviations = {label: round(v - average, 3) for label, v in sources.items()}
+            max_deviation = max(abs(d) for d in deviations.values())
+            adjudication = _adjudicate_lane(sources)
+
+            result.append({
+                "race_log_id":   row["race_log_id"],
+                "event_id":      row["event_id"],
+                "event_name":    row["event_name"],
+                "heat":          row["heat"],
+                "heat_label":    row["heat_label"],
+                "heat_order":    row["heat_order"],
+                "round":         row["round"],
+                "session":       row["session"],
+                "lane":          lane_idx + 1,
+                "sources":       sources,
+                "source_count":  len(sources),
+                "average":       round(average, 3),
+                "deviations":    deviations,
+                "max_deviation": round(max_deviation, 3),
+                **adjudication,
+            })
+
+    return result
 
 
 def get_full_log(meet_id, db_path=None):

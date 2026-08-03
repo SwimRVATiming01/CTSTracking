@@ -24,6 +24,7 @@ from database import (
     get_schedule, get_sessions, override_start_time, clear_override,
     reorder_heats, add_manual_heat,
     get_race_dashboard, get_full_log, get_current_heat_state, resolve_heat_row,
+    get_harvested_times,
     add_manual_race_entry, update_race_entry,
     get_pending_summary, get_ingestion_log,
     export_race_log_csv, snapshot_db, get_snapshots,
@@ -209,12 +210,22 @@ DASHBOARD_HTML = """
     /* Trends view */
     #btn-trends { background: #0f3460; color: #a0c4ff; }
     #btn-trends.active { background: #a0c4ff; color: #0d1117; }
+    #btn-harvested { background: #3a2a1a; color: #ffc06b; }
+    #btn-harvested.active { background: #ffc06b; color: #0d1117; }
     .trends-table { border-collapse: collapse; }
     .trends-table th { background: #0f3460; color: #a0c4ff; padding: 5px 7px; text-align: center;
                        font-size: 10px; white-space: nowrap; position: sticky; top: 0; z-index: 10; }
     .trends-table td { padding: 4px 7px; border-bottom: 1px solid #1e2a4a; text-align: center;
                        font-size: 12px; white-space: nowrap; }
     .trends-table td.left { text-align: left; }
+    .trends-table td.cell-agree { background: rgba(107,255,107,0.14); }
+    .trends-table td.cell-disagree { background: rgba(255,107,107,0.18); }
+    #harvested-table-wrap.hide-touchpad .col-touchpad,
+    #harvested-table-wrap.hide-button_a .col-button_a,
+    #harvested-table-wrap.hide-button_b .col-button_b,
+    #harvested-table-wrap.hide-dolphin_a .col-dolphin_a,
+    #harvested-table-wrap.hide-dolphin_b .col-dolphin_b,
+    #harvested-table-wrap.hide-dolphin_c .col-dolphin_c { display: none; }
     .history-toolbar { padding: 8px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .history-select { background: #0f3460; border: 1px solid #1e2a4a; color: #e0e0e0;
                       font-family: monospace; font-size: 12px; padding: 4px 8px;
@@ -416,6 +427,7 @@ DASHBOARD_HTML = """
     <button class="view-btn" id="btn-reorder"  onclick="setView('reorder')">Reorder</button>
     <button class="view-btn" id="btn-history"  onclick="setView('history')">History</button>
     <button class="view-btn" id="btn-trends"   onclick="setView('trends')">Trends</button>
+    <button class="view-btn" id="btn-harvested" onclick="setView('harvested')">Harvested Times</button>
     <button class="view-btn" id="btn-checklist" onclick="setView('checklist')">Checklist</button>
     <button class="view-btn" id="btn-peripherals" onclick="setView('peripherals')">Peripherals</button>
     <button class="view-btn" id="btn-settings" onclick="setView('settings')">Settings</button>
@@ -524,6 +536,39 @@ DASHBOARD_HTML = """
       </tr>
     </thead>
     <tbody id="trends-table"></tbody>
+  </table>
+  </div>
+</div>
+
+<!-- Harvested Times View -->
+<div id="harvested-view" style="display:none;flex-direction:column;height:calc(100vh - var(--header-height, 0px));overflow:hidden;">
+  <div style="flex-shrink:0;padding:8px 14px;font-size:11px;color:#888;border-bottom:1px solid #1e2a4a;background:#1a1a2e;">
+    Every raw time recorded per lane (touchpad, backup buttons, Dolphin backup watches), the average of whatever's
+    available, and each source's deviation from that average. Not an official time &mdash; adjudication rules
+    aren't defined yet, this is just a confidence signal alongside the recorder's own judgment.
+  </div>
+  <div id="harvested-col-toggles" style="flex-shrink:0;padding:6px 14px;display:flex;gap:14px;flex-wrap:wrap;
+       align-items:center;border-bottom:1px solid #1e2a4a;background:#141428;font-size:11px;"></div>
+  <div style="flex:1;overflow:auto;">
+  <table class="trends-table" id="harvested-table-wrap" style="width:100%">
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th>Heat</th>
+        <th>Lane</th>
+        <th>Official</th>
+        <th>Confidence</th>
+        <th class="col-touchpad">Touchpad</th>
+        <th class="col-button_a">Button A</th>
+        <th class="col-button_b">Button B</th>
+        <th class="col-dolphin_a">Dolphin A</th>
+        <th class="col-dolphin_b">Dolphin B</th>
+        <th class="col-dolphin_c">Dolphin C</th>
+        <th>Avg</th>
+        <th>Max &Delta;</th>
+      </tr>
+    </thead>
+    <tbody id="harvested-table"></tbody>
   </table>
   </div>
 </div>
@@ -873,6 +918,7 @@ function setView(v) {
   document.getElementById('reorder-view').style.display  = v === 'reorder'  ? '' : 'none';
   document.getElementById('history-view').style.display  = v === 'history'  ? '' : 'none';
   document.getElementById('trends-view').style.display   = v === 'trends'   ? 'flex' : 'none';
+  document.getElementById('harvested-view').style.display = v === 'harvested' ? 'flex' : 'none';
   document.getElementById('peripherals-view').style.display = v === 'peripherals' ? '' : 'none';
   document.getElementById('checklist-view').style.display = v === 'checklist' ? '' : 'none';
   document.getElementById('settings-view').style.display = v === 'settings' ? '' : 'none';
@@ -881,6 +927,7 @@ function setView(v) {
   document.getElementById('btn-reorder').classList.toggle('active', v === 'reorder');
   document.getElementById('btn-history').classList.toggle('active', v === 'history');
   document.getElementById('btn-trends').classList.toggle('active', v === 'trends');
+  document.getElementById('btn-harvested').classList.toggle('active', v === 'harvested');
   document.getElementById('btn-peripherals').classList.toggle('active', v === 'peripherals');
   document.getElementById('btn-checklist').classList.toggle('active', v === 'checklist');
   document.getElementById('btn-settings').classList.toggle('active', v === 'settings');
@@ -888,6 +935,7 @@ function setView(v) {
   if (v === 'reorder') loadReorderView();
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
+  if (v === 'harvested') loadHarvestedTimes();
   if (v === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
   if (v === 'checklist') loadChecklist();
   if (v === 'settings') updateScheduleToggleButtons();
@@ -1588,6 +1636,124 @@ function loadTrends() {
 }
 
 // ---------------------------------------------------------------------------
+// HARVESTED TIMES
+// ---------------------------------------------------------------------------
+const HARVESTED_SOURCES = [
+  ['touchpad',  'Touchpad'],
+  ['button_a',  'Button A'],
+  ['button_b',  'Button B'],
+  ['dolphin_a', 'Dolphin A'],
+  ['dolphin_b', 'Dolphin B'],
+  ['dolphin_c', 'Dolphin C'],
+];
+
+let harvestedHiddenCols = new Set(
+  (localStorage.getItem('harvested_hidden_cols') || '').split(',').filter(Boolean)
+);
+// Which columns have at least one value in the most recently fetched rows --
+// recomputed on every load, not persisted. A column with zero data is hidden
+// regardless of the manual checkbox (nothing to show), but the checkbox
+// itself still reflects the user's own preference so a column that later
+// starts getting data reappears on its own, no re-toggling needed.
+let harvestedColHasData = {};
+
+function applyHarvestedColVisibility() {
+  const wrap = document.getElementById('harvested-table-wrap');
+  HARVESTED_SOURCES.forEach(([col]) => {
+    const hide = harvestedHiddenCols.has(col) || harvestedColHasData[col] === false;
+    wrap.classList.toggle('hide-' + col, hide);
+  });
+}
+
+function toggleHarvestedCol(col, visible) {
+  if (visible) harvestedHiddenCols.delete(col);
+  else harvestedHiddenCols.add(col);
+  localStorage.setItem('harvested_hidden_cols', Array.from(harvestedHiddenCols).join(','));
+  applyHarvestedColVisibility();
+}
+
+function renderHarvestedColToggles() {
+  document.getElementById('harvested-col-toggles').innerHTML =
+    '<span style="color:#888;letter-spacing:1px;font-size:10px;">COLUMNS</span>' +
+    HARVESTED_SOURCES.map(([col, label]) => {
+      const checked = harvestedHiddenCols.has(col) ? '' : 'checked';
+      const noData = harvestedColHasData[col] === false;
+      const dimStyle = noData ? 'color:#555' : '';
+      return '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;' + dimStyle + '">' +
+        '<input type="checkbox" ' + checked + ' onchange="toggleHarvestedCol(\\'' + col + '\\', this.checked)">' +
+        label + (noData ? ' <span style="font-size:9px;">(no data)</span>' : '') + '</label>';
+    }).join('');
+}
+
+function loadHarvestedTimes() {
+  fetch('/api/harvested-times')
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        document.getElementById('harvested-table').innerHTML =
+          '<tr><td colspan="13" style="color:#888;padding:14px">' + data.error + '</td></tr>';
+        return;
+      }
+
+      const rows = data.rows || [];
+      HARVESTED_SOURCES.forEach(([col]) => {
+        harvestedColHasData[col] = rows.some(r => r.sources[col] != null);
+      });
+      renderHarvestedColToggles();
+      applyHarvestedColVisibility();
+
+      const SOURCE_TAGS = { touchpad: 'pad', buttons: 'buttons', dolphin: 'Dolphin' };
+
+      let lastEvent = null;
+      document.getElementById('harvested-table').innerHTML =
+        rows.map(row => {
+          const showEv = row.event_id !== lastEvent;
+          lastEvent = row.event_id;
+          const cells = HARVESTED_SOURCES.map(([src]) => {
+            const v = row.sources[src];
+            if (v == null) return '<td class="col-' + src + '"><span style="color:#333">\\u2014</span></td>';
+            const dev = row.deviations[src];
+            const devStr = dev == null ? '' :
+              '<br><span style="font-size:9px;color:#888">' + (dev > 0 ? '+' : '') + dev.toFixed(2) + '</span>';
+            // Agreement is against the rule-adjudicated official time, not the
+            // plain average -- same 0.30s threshold as the rulebook's own
+            // malfunction indicator (102.23.4.C(1)), reused rather than
+            // inventing a separate tolerance.
+            let agreeClass = '';
+            if (row.official_time != null) {
+              agreeClass = Math.abs(v - row.official_time) < 0.30 ? ' cell-agree' : ' cell-disagree';
+            }
+            return '<td class="col-' + src + agreeClass + '">' + v.toFixed(2) + devStr + '</td>';
+          }).join('');
+
+          const officialCell = row.official_time == null
+            ? '<span style="color:#333">\\u2014</span>'
+            : row.official_time.toFixed(2) + '<br><span style="font-size:9px;color:#888">' +
+              (SOURCE_TAGS[row.official_source] || row.official_source) + '</span>';
+
+          const confidenceCell = row.flagged
+            ? '<span style="color:#ff6b6b">&#9679; Check</span><br><span style="font-size:9px;color:#888">' +
+              row.flags.map(escapeHtml).join('<br>') + '</span>'
+            : (row.official_time == null
+                ? '<span style="color:#555">&#9679; N/A</span>'
+                : '<span style="color:#6bff6b">&#9679; OK</span>');
+
+          return '<tr>' +
+            '<td>' + (showEv ? row.event_id : '') + '</td>' +
+            '<td>' + heatDisplay(row.heat || '\\u2014', row.heat_label) + '</td>' +
+            '<td>' + row.lane + '</td>' +
+            '<td>' + officialCell + '</td>' +
+            '<td>' + confidenceCell + '</td>' +
+            cells +
+            '<td>' + row.average.toFixed(2) + '</td>' +
+            '<td>' + row.max_deviation.toFixed(2) + '</td>' +
+            '</tr>';
+        }).join('');
+    })
+    .catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
 // CHECKLIST
 // ---------------------------------------------------------------------------
 
@@ -1961,6 +2127,7 @@ function poll() {
   if (currentView === 'schedule') loadDashboard();
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
+  else if (currentView === 'harvested') loadHarvestedTimes();
   else if (currentView === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
   else if (currentView === 'checklist') loadChecklist();
   // history view is not auto-refreshed — it's read-only static data
@@ -2072,6 +2239,15 @@ def dashboard():
 @app.route("/api/version")
 def api_version():
     return jsonify(get_git_version())
+
+
+@app.route("/api/harvested-times")
+def api_harvested_times():
+    meet = get_active_meet()
+    if not meet:
+        return jsonify({"error": "No active meet", "rows": [], "meet": None})
+    session = request.args.get("session")
+    return jsonify({"meet": meet, "rows": get_harvested_times(meet["meet_id"], session)})
 
 
 @app.route("/api/dashboard")
