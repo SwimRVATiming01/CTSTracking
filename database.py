@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -641,6 +642,44 @@ def get_full_log(meet_id, db_path=None):
     return [dict(r) for r in rows]
 
 
+def resolve_heat_row(event_id, heat, rows):
+    """
+    Match a posted (event_id, heat) -- as reported by Companion/Streamline --
+    to the single best schedule row for that event.
+
+    heat is usually numeric and matches schedule.heat directly, but during
+    Finals sessions Streamline reports timed-final sections as a single
+    letter instead (A/B/C, ...) -- schedule.heat and Dolphin5's own
+    setEventAndHeat command have no concept of a letter heat, only Meet
+    Manager's heat_label does. Confirmed live 2026-08-02 (event 107: heat 1
+    = label C, heat 2 = label B, heat 3 = label A) that the letter is
+    ordinal from the *end* of the event's heat sequence -- A is always the
+    last heat run, B second-to-last, C third-to-last -- rather than a
+    literal heat_label lookup, so it resolves even for events whose
+    heat_label wasn't parsed/populated.
+
+    Returns the matched row, or None if the event has no schedule rows at
+    all, or a letter heat falls outside the event's actual heat count.
+    """
+    ev = str(event_id)
+    ch = str(heat)
+    event_rows = sorted(
+        [r for r in rows if str(r.get("event_id")) == ev],
+        key=lambda r: r.get("heat_order") or 0
+    )
+    if not event_rows:
+        return None
+    for r in event_rows:
+        if str(r.get("heat")) == ch:
+            return r
+    if re.match(r'^[A-Za-z]$', ch):
+        pos = ord(ch.upper()) - ord('A')   # A->0, B->1, C->2
+        idx = len(event_rows) - 1 - pos
+        if 0 <= idx < len(event_rows):
+            return event_rows[idx]
+    return None
+
+
 def get_current_heat_state(meet_id):
     """
     Return current heat and next-heat state for each pool. Used by
@@ -648,8 +687,14 @@ def get_current_heat_state(meet_id):
 
     Per pool: prefer Companion's own posted event/heat
     (companion_state.get_fresh) if it's been posted recently enough to
-    trust -- raw pass-through, no schedule-row match required, since the
-    whole point is to follow GEN7 even when it's off the printed schedule.
+    trust. Resolved against the schedule via resolve_heat_row() -- not a
+    pure raw pass-through -- specifically so a Finals letter heat (A/B/C)
+    gets translated to the real numeric heat before it ever reaches
+    Dolphin5's setEventAndHeat (which only understands numeric heats) or
+    the Companion GET endpoints. Falls back to Companion's own raw value
+    only if the event isn't found in the schedule at all (e.g. an
+    off-schedule/unimported event), so chase still follows GEN7 rather
+    than stalling.
     Falls back to the next scheduled heat after the last one GEN7 has
     actually finished and filed (is_current_p1/p2, schedule-order-based)
     when Companion hasn't posted anything fresh -- NOT the last-finished
@@ -663,14 +708,16 @@ def get_current_heat_state(meet_id):
         fresh = companion_state.get_fresh(pool_num)
         if fresh:
             event_id = fresh["event_id"]
-            event_name = next(
+            match = resolve_heat_row(event_id, fresh["heat"], rows)
+            resolved_heat = match["heat"] if match else fresh["heat"]
+            event_name = match["event_name"] if match else next(
                 (r["event_name"] for r in rows if str(r.get("event_id")) == str(event_id)),
                 None
             )
             result[f"pool{pool_num}"] = {
                 "active": True,
                 "current_event": event_id,
-                "current_heat": fresh["heat"],
+                "current_heat": resolved_heat,
                 "current_event_name": event_name,
                 "cts_race_num": None,
                 "next_event": None,

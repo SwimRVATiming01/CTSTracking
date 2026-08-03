@@ -23,7 +23,7 @@ from database import (
     get_active_meet, get_all_meets, create_meet, set_active_meet,
     get_schedule, get_sessions, override_start_time, clear_override,
     reorder_heats, add_manual_heat,
-    get_race_dashboard, get_full_log, get_current_heat_state,
+    get_race_dashboard, get_full_log, get_current_heat_state, resolve_heat_row,
     add_manual_race_entry, update_race_entry,
     get_pending_summary, get_ingestion_log,
     export_race_log_csv, snapshot_db, get_snapshots,
@@ -2091,33 +2091,12 @@ def api_dashboard():
             row["is_current_p2"] = False
 
         def _resolve_companion(companion):
-            """Return the single schedule row that best matches companion {event_id, heat}.
-            Priority:
-              1. Exact numeric heat match
-              2. Ordinal letter: A=last heat of event, B=second-to-last, etc.
-            Only one row is ever returned so a single heat is highlighted.
-            """
-            ev = str(companion["event_id"])
-            ch = str(companion["heat"])
-            # All rows for this event, ordered by heat_order (schedule sequence)
-            event_rows = sorted(
-                [r for r in rows if str(r.get("event_id")) == ev],
-                key=lambda r: r.get("heat_order") or 0
-            )
-            if not event_rows:
-                return None
-            # 1. Exact numeric match
-            for r in event_rows:
-                if str(r.get("heat")) == ch:
-                    return r
-            # 2. Letter ordinal: A=last, B=second-to-last, C=third-to-last
-            import re as _re
-            if _re.match(r'^[A-Za-z]$', ch):
-                pos = ord(ch.upper()) - ord('A')   # A→0, B→1, C→2
-                idx = len(event_rows) - 1 - pos
-                if 0 <= idx < len(event_rows):
-                    return event_rows[idx]
-            return None
+            """Return the single schedule row that best matches companion
+            {event_id, heat} -- see database.resolve_heat_row() for the
+            exact/ordinal-letter matching logic (shared with
+            get_current_heat_state() so dashboard highlighting and the
+            Dolphin5 chase loop agree on the same resolved heat)."""
+            return resolve_heat_row(companion["event_id"], companion["heat"], rows)
 
         if companion_p1:
             match = _resolve_companion(companion_p1)
