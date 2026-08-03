@@ -495,6 +495,12 @@ def _match_dolphin5_by_event_heat(meet_id, event_number, heat_number, file_time,
     return row["id"]
 
 
+# Dolphin5 device files known to land in the same watched folder as real
+# race-result XMLs -- not race data, skipped rather than logged as an
+# ingestion error. Compared case-insensitively.
+_DOLPHIN5_NON_RACE_FILENAMES = {"currentsettings.xml"}
+
+
 def ingest_dolphin5_file(filepath, machine_id_hint=None):
     """
     Full Dolphin5 XML ingestion pipeline.
@@ -514,6 +520,20 @@ def ingest_dolphin5_file(filepath, machine_id_hint=None):
     itself didn't already parse one.
     """
     filename = os.path.basename(filepath)
+
+    if filename.lower() in _DOLPHIN5_NON_RACE_FILENAMES:
+        # Dolphin5 also drops its own device files into the same folder as
+        # real race XMLs -- confirmed live 2026-08-02 (CurrentSettings.xml).
+        # Skipped, not an ingestion error. Point of interest for later:
+        # CurrentSettings.xml is a real, already-observed source for
+        # Dolphin5's LogXMLFiles/LogD03Files toggles (see the Dolphin5
+        # integration plan) -- could eventually feed a checklist auto-check
+        # instead of today's manual "GEN7 software settings configured"
+        # item, if parsing its schema turns out worthwhile.
+        msg = "Skipped: not a race-result file (Dolphin5 device file)"
+        _log_ingestion(filename, "dolphin5", machine_id_hint, None, "skipped", msg)
+        return {"status": "skipped", "message": msg}
+
     _backup_raw_file(filepath, "dolphin5")
     fn = parse_dolphin5_xml_filename(filename)
     if not fn.get("machine_id") and machine_id_hint:
