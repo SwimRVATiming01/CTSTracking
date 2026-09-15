@@ -57,7 +57,7 @@ INGEST_CTS_ENABLED = False
 # this test instance also ingesting real Dolphin4 .do3 traffic from the live
 # meet. Flip back to True (or remove) once this stops being a throwaway test
 # run -- this is not meant to be a permanent toggle like INGEST_CTS_ENABLED.
-INGEST_DOLPHIN_ENABLED = False
+INGEST_DOLPHIN_ENABLED = True
 
 # ---------------------------------------------------------------------------
 # DOLPHIN CORRELATION
