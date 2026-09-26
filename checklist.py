@@ -84,10 +84,19 @@ def _check_timing_clients(params, context):
         return False, "No clients reporting in"
     lines = []
     any_online = False
+    dolphin5_problem = False
     for c in clients:
         any_online = any_online or c["online"]
         line = f"{c['machine_id']}: {'online' if c['online'] else 'OFFLINE'}, last seen {c['last_seen']}"
         problems = []
+        if c["machine_id"].endswith("_DOLPHIN5_AHK"):
+            if not c["online"]:
+                dolphin5_problem = True
+            elif c.get("dolphin5_running") is False:
+                dolphin5_problem = True
+                problems.append("Dolphin5 closed")
+            elif c.get("dolphin5_running"):
+                line += " (Dolphin5 open)"
         if c.get("share_ok") is False:
             problems.append("share unreachable")
         if c.get("dolphin_ok") is False:
@@ -99,7 +108,7 @@ def _check_timing_clients(params, context):
         if problems:
             line += f" ({', '.join(problems)})"
         lines.append(line)
-    return any_online, "\n".join(lines)
+    return any_online and not dolphin5_problem, "\n".join(lines)
 
 
 def _check_session_report_imported(params, context):

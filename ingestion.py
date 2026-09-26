@@ -406,6 +406,7 @@ def ingest_cts_file(filepath):
 
     race_id = _write_race_log_from_cts(cts_data, fn, active["meet_id"], filename)
     matched = _attempt_dolphin_correlation(race_id, fn.get("file_time"))
+    _attempt_dolphin5_correlation(race_id, fn.get("file_time"))
     status = "matched" if matched else "pending"
     _log_ingestion(filename, "cts", fn.get("machine_id"), fn.get("file_time"), status)
     return {"status": status, "race_log_id": race_id, "dolphin_matched": matched}
@@ -414,8 +415,17 @@ def ingest_cts_file(filepath):
 def ingest_dolphin_file(filepath):
     """Full Dolphin ingestion pipeline."""
     filename = os.path.basename(filepath)
-    _backup_raw_file(filepath, "dolphin")
     fn = parse_dolphin_filename(filename)
+
+    # Only Dolphin4 .do3 arrives via client.py (which adds __MACHINE__timestamp).
+    # Dolphin5 writes its .do3 straight to the share for Meet Manager only;
+    # CTSTracking tracks Dolphin5 through its .xml instead.
+    if not fn["machine_id"]:
+        msg = "Skipped: .do3 not relayed by client.py (Dolphin5, Meet Manager only)"
+        _log_ingestion(filename, "dolphin", None, None, "skipped", msg)
+        return {"status": "skipped", "message": msg}
+
+    _backup_raw_file(filepath, "dolphin")
 
     if fn["dolphin_race_num"] is None:
         msg = "Could not extract race number"
@@ -462,7 +472,7 @@ def _match_dolphin5_by_event_heat(meet_id, event_number, heat_number, file_time,
     with get_conn() as conn:
         row = conn.execute(
             """SELECT id, cts_file_time FROM race_log
-               WHERE matched=0 AND meet_id=? AND event_id=? AND heat=?
+               WHERE dolphin5_race_num IS NULL AND meet_id=? AND event_id=? AND heat=?
                ORDER BY ABS(julianday(COALESCE(cts_file_time, ?)) - julianday(?)) LIMIT 1""",
             (meet_id, event_number, heat_number, file_time.isoformat(), file_time.isoformat())
         ).fetchone()
@@ -474,20 +484,8 @@ def _match_dolphin5_by_event_heat(meet_id, event_number, heat_number, file_time,
         abs((file_time - datetime.fromisoformat(row["cts_file_time"])).total_seconds())
         if row["cts_file_time"] else None
     )
-    dataset = int(fn["meet_num"]) if fn.get("meet_num") else None
-    wa = json.dumps(xml_data["watch_a"]) if xml_data else None
-    wb = json.dumps(xml_data["watch_b"]) if xml_data else None
-    wc = json.dumps(xml_data["watch_c"]) if xml_data else None
-
-    with get_write_conn() as conn:
-        conn.execute(
-            """UPDATE race_log SET dolphin_race_num=?,dolphin_dataset=?,dolphin_file_time=?,
-               dolphin_source_machine=?,dolphin_filename=?,match_delta_sec=?,matched=1,
-               dolphin_watch_a=?,dolphin_watch_b=?,dolphin_watch_c=?,dolphin_source_format=?
-               WHERE id=?""",
-            (fn.get("dolphin_race_num"), dataset, file_time.isoformat(),
-             fn.get("machine_id"), filename, delta, wa, wb, wc, "dolphin5_xml", row["id"])
-        )
+    _write_dolphin5_match(row["id"], fn.get("dolphin_race_num"), file_time.isoformat(),
+                          fn.get("machine_id"), filename, delta, xml_data)
     log.info(
         f"Dolphin5 XML exact event/heat match: event={event_number} heat={heat_number} "
         f"-> race_log id={row['id']}"
@@ -575,10 +573,8 @@ def ingest_dolphin5_file(filepath, machine_id_hint=None):
         )
 
     if not matched_id:
-        dataset = int(fn["meet_num"]) if fn.get("meet_num") else None
-        matched_id = _match_dolphin_to_cts(
-            fn["dolphin_race_num"], dataset, fn.get("machine_id"),
-            file_time, filename, xml_data, source_format="dolphin5_xml"
+        matched_id = _match_dolphin5_to_cts(
+            fn["dolphin_race_num"], fn.get("machine_id"), file_time, filename, xml_data
         )
 
     if matched_id:
@@ -646,6 +642,7 @@ def ingest_gen_file(filepath):
 
     race_id = _write_race_log_from_gen(gen_data, race_num, file_time, active["meet_id"], filename)
     matched = _attempt_dolphin_correlation(race_id, file_time)
+    _attempt_dolphin5_correlation(race_id, file_time)
     status = "matched" if matched else "pending"
     _log_ingestion(filename, "gen", None, file_time, status)
     return {"status": status, "race_log_id": race_id, "dolphin_matched": matched}
@@ -1138,7 +1135,7 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
     with get_conn() as conn:
         pending = conn.execute(
             """SELECT * FROM pending_dolphin
-               WHERE file_time BETWEEN ? AND ?
+               WHERE file_time BETWEEN ? AND ? AND dolphin_source_format != 'dolphin5_xml'
                ORDER BY ABS(julianday(file_time)-julianday(?)) LIMIT 1""",
             (low, high, cts_file_time.isoformat())
         ).fetchone()
@@ -1168,4 +1165,61 @@ def _attempt_dolphin_correlation(race_log_id, cts_file_time):
         conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))
 
     log.info(f"Retroactive match: pending Dolphin #{pending['dolphin_race_num']} -> race_log id={race_log_id} (delta {delta:.1f}s)")
+    return True
+
+
+def _write_dolphin5_match(race_log_id, race_num, file_time_iso, machine_id, filename, delta, watch_data):
+    wa = json.dumps(watch_data["watch_a"]) if watch_data else None
+    wb = json.dumps(watch_data["watch_b"]) if watch_data else None
+    wc = json.dumps(watch_data["watch_c"]) if watch_data else None
+    with get_write_conn() as conn:
+        conn.execute(
+            """UPDATE race_log SET dolphin5_race_num=?,dolphin5_file_time=?,
+               dolphin5_source_machine=?,dolphin5_filename=?,dolphin5_match_delta_sec=?,
+               dolphin5_watch_a=?,dolphin5_watch_b=?,dolphin5_watch_c=?
+               WHERE id=?""",
+            (race_num, file_time_iso, machine_id, filename, delta, wa, wb, wc, race_log_id)
+        )
+
+
+def _match_dolphin5_to_cts(race_num, machine_id, file_time, filename, xml_data):
+    """Time-window match for Dolphin5 .xml into its own slot, independent of Dolphin4."""
+    window = timedelta(seconds=config.DOLPHIN_MATCH_WINDOW_SECONDS)
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT id, cts_file_time FROM race_log
+               WHERE dolphin5_race_num IS NULL AND cts_file_time BETWEEN ? AND ?
+               ORDER BY ABS(julianday(cts_file_time)-julianday(?)) LIMIT 1""",
+            ((file_time - window).isoformat(), (file_time + window).isoformat(), file_time.isoformat())
+        ).fetchone()
+    if not row:
+        return None
+    delta = abs((file_time - datetime.fromisoformat(row["cts_file_time"])).total_seconds())
+    _write_dolphin5_match(row["id"], race_num, file_time.isoformat(), machine_id, filename, delta, xml_data)
+    log.info(f"Dolphin5 #{race_num} matched to race_log id={row['id']} (delta {delta:.1f}s)")
+    return row["id"]
+
+
+def _attempt_dolphin5_correlation(race_log_id, cts_file_time):
+    """After CTS arrives, check pending_dolphin for a waiting Dolphin5 .xml."""
+    if not cts_file_time:
+        return False
+    window = timedelta(seconds=config.DOLPHIN_MATCH_WINDOW_SECONDS)
+    with get_conn() as conn:
+        pending = conn.execute(
+            """SELECT * FROM pending_dolphin
+               WHERE file_time BETWEEN ? AND ? AND dolphin_source_format = 'dolphin5_xml'
+               ORDER BY ABS(julianday(file_time)-julianday(?)) LIMIT 1""",
+            ((cts_file_time - window).isoformat(), (cts_file_time + window).isoformat(),
+             cts_file_time.isoformat())
+        ).fetchone()
+    if not pending:
+        return False
+    delta = abs((cts_file_time - datetime.fromisoformat(pending["file_time"])).total_seconds())
+    watch_data = json.loads(pending["raw_data"]) if pending["raw_data"] else None
+    _write_dolphin5_match(race_log_id, pending["dolphin_race_num"], pending["file_time"],
+                          pending["source_machine"], pending["filename"], delta, watch_data)
+    with get_write_conn() as conn:
+        conn.execute("DELETE FROM pending_dolphin WHERE id=?", (pending["id"],))
+    log.info(f"Retroactive match: pending Dolphin5 #{pending['dolphin_race_num']} -> race_log id={race_log_id} (delta {delta:.1f}s)")
     return True

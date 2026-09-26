@@ -118,6 +118,14 @@ CREATE TABLE IF NOT EXISTS race_log (
     dolphin_watch_b         TEXT,
     dolphin_watch_c         TEXT,
     dolphin_source_format   TEXT NOT NULL DEFAULT 'do3',
+    dolphin5_race_num       INTEGER,
+    dolphin5_file_time      TEXT,
+    dolphin5_source_machine TEXT,
+    dolphin5_filename       TEXT,
+    dolphin5_match_delta_sec REAL,
+    dolphin5_watch_a        TEXT,
+    dolphin5_watch_b        TEXT,
+    dolphin5_watch_c        TEXT,
     ingested_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -200,6 +208,20 @@ CREATE TABLE IF NOT EXISTS dolphin5_config (
 """
 
 
+# Dolphin5 .xml gets its own slot on race_log so it doesn't compete with
+# Dolphin4 .do3 (dolphin_* columns) while both run in parallel.
+DOLPHIN5_COLUMN_MIGRATIONS = [
+    "ALTER TABLE race_log ADD COLUMN dolphin5_race_num INTEGER",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_file_time TEXT",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_source_machine TEXT",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_filename TEXT",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_match_delta_sec REAL",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_watch_a TEXT",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_watch_b TEXT",
+    "ALTER TABLE race_log ADD COLUMN dolphin5_watch_c TEXT",
+]
+
+
 def init_db():
     """Create all tables if they don't exist. Safe to call on every startup."""
     log.info(f"Initializing database at {config.DB_PATH}")
@@ -222,12 +244,15 @@ def init_db():
             "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
             "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
             "ALTER TABLE schedule ADD COLUMN session_report_imported_at TEXT",
+            "ALTER TABLE checklist_items ADD COLUMN notes TEXT",
+            *DOLPHIN5_COLUMN_MIGRATIONS,
         ]:
             try:
                 conn.execute(sql)
             except Exception:
                 pass  # Column already exists
     _seed_checklist_items()
+    _backfill_checklist_notes()
     log.info("Database ready.")
 
 
@@ -422,6 +447,7 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
             r.cts_file_time,
             r.cts_source_machine,
             r.dolphin_race_num,
+            r.dolphin5_race_num,
             r.dolphin_dataset,
             r.dolphin_file_time,
             r.dolphin_source_machine,
@@ -508,12 +534,13 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
                 "ALTER TABLE race_log ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
                 "ALTER TABLE pending_dolphin ADD COLUMN dolphin_source_format TEXT NOT NULL DEFAULT 'do3'",
                 "ALTER TABLE schedule ADD COLUMN session_report_imported_at TEXT",
+                *DOLPHIN5_COLUMN_MIGRATIONS,
             ]:
                 try:
                     conn.execute(sql)
                 except Exception:
                     pass
-            rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+            rows =[dict(r) for r in conn.execute(query, params).fetchall()]
         finally:
             conn.close()
     else:
@@ -828,26 +855,33 @@ def get_full_log(meet_id, db_path=None):
                    r.heat,
                    r.cts_race_num,
                    r.cts_start_time,
-                   r.dolphin_race_num,
+                   CASE WHEN i.file_type = 'dolphin5' THEN r.dolphin5_race_num
+                        ELSE r.dolphin_race_num END AS dolphin_race_num,
                    r.matched
                FROM ingestion_log i
                LEFT JOIN race_log r
                    ON (
-                       (i.file_type = 'cts'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
-                    OR (i.file_type = 'gen'     AND r.cts_filename    = i.filename AND r.meet_id = ?)
-                    OR (i.file_type = 'dolphin' AND r.dolphin_filename = i.filename AND r.meet_id = ?)
+                       (i.file_type = 'cts'      AND r.cts_filename      = i.filename AND r.meet_id = ?)
+                    OR (i.file_type = 'gen'      AND r.cts_filename      = i.filename AND r.meet_id = ?)
+                    OR (i.file_type = 'dolphin'  AND r.dolphin_filename  = i.filename AND r.meet_id = ?)
+                    OR (i.file_type = 'dolphin5' AND r.dolphin5_filename = i.filename AND r.meet_id = ?)
                    )
                ORDER BY i.ingested_at ASC"""
     if db_path:
         conn = sqlite3.connect(db_path, detect_types=sqlite3.PARSE_DECLTYPES)
         conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute(sql, (meet_id, meet_id, meet_id)).fetchall()
+            for migration in DOLPHIN5_COLUMN_MIGRATIONS:
+                try:
+                    conn.execute(migration)
+                except Exception:
+                    pass
+            rows = conn.execute(sql, (meet_id, meet_id, meet_id, meet_id)).fetchall()
         finally:
             conn.close()
     else:
         with get_conn() as conn:
-            rows = conn.execute(sql, (meet_id, meet_id, meet_id)).fetchall()
+            rows = conn.execute(sql, (meet_id, meet_id, meet_id, meet_id)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -1065,6 +1099,27 @@ def wipe_database():
 # items are a row insert rather than a deploy. Only a genuinely new *kind* of
 # check (a new checker_type, see checklist.py) needs an actual code change.
 
+CHECKLIST_IMPORT_LOCATION_NOTE = (
+    "Looks for Meet Manager CSVs in:\n"
+    "- Documents\\ (on whichever machine runs the server) or,\n"
+    "- anywhere under \\\\CSAC-001\\swmeets8\\racenumbers"
+)
+
+
+CHECKLIST_TIMING_CLIENTS_NOTE = (
+    "client.py -- Dolphin4 and GEN7 machines:\n"
+    "- Copy client.py from the CTSTracking repo to the machine and run it (needs Python + psutil)\n"
+    "- Relays .do3 from C:\\CTSDolphin to \\\\CSAC-001\\swmeets8\\racenumbers, heartbeat every 30s\n"
+    "- Shows up here under the machine's computer name\n"
+    "Dolphin5_OnePool.ahk -- Dolphin5 machine (one per pool):\n"
+    "- Run from G:\\Shared drives\\#Meet Management\\Timing Maintenance\\Autohotkeys\\"
+    "Dolphin (and maybe some Meet Manager)\\\n"
+    "- CTS_TRACKER_URL at the top must point at this server (http://<server-ip>:5000/api/heartbeat)\n"
+    "- Shows up here as <COMPUTERNAME>_DOLPHIN5_AHK; fails this item if offline or Dolphin5 is closed\n"
+    "- Closes Dolphin5's reset dialog; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps"
+)
+
+
 def _checklist_seed():
     """Small starter set derived from the system's existing architecture
     (network share, schedule import, Companion, client heartbeats). Real
@@ -1076,16 +1131,19 @@ def _checklist_seed():
          "checker_params": json.dumps({"path": config.WATCH_DIR}), "sort_order": 10},
         {"label": "Schedule imported for active meet", "category": "auto",
          "checker_type": "schedule_imported",
-         "checker_params": "{}", "sort_order": 20},
+         "checker_params": "{}", "sort_order": 20,
+         "notes": CHECKLIST_IMPORT_LOCATION_NOTE},
         {"label": "Session report imported (optional)", "category": "auto",
          "checker_type": "session_report_imported",
-         "checker_params": "{}", "sort_order": 25},
+         "checker_params": "{}", "sort_order": 25,
+         "notes": CHECKLIST_IMPORT_LOCATION_NOTE + "\nOptional -- not required for the schedule import above."},
         {"label": "Bitfocus Companion connected", "category": "auto",
          "checker_type": "companion_connected",
          "checker_params": "{}", "sort_order": 30},
         {"label": "Timing machine clients", "category": "auto",
          "checker_type": "timing_clients",
-         "checker_params": "{}", "sort_order": 40},
+         "checker_params": "{}", "sort_order": 40,
+         "notes": CHECKLIST_TIMING_CLIENTS_NOTE},
         {"label": "Dolphin5 TCP control", "category": "auto",
          "checker_type": "dolphin5_connected",
          "checker_params": "{}", "sort_order": 45},
@@ -1127,12 +1185,47 @@ def _seed_checklist_items():
         for item in _checklist_seed():
             conn.execute(
                 """INSERT INTO checklist_items
-                   (label, category, checker_type, checker_params, sort_order)
-                   VALUES (?,?,?,?,?)""",
+                   (label, category, checker_type, checker_params, sort_order, notes)
+                   VALUES (?,?,?,?,?,?)""",
                 (item["label"], item["category"], item["checker_type"],
-                 item["checker_params"], item["sort_order"])
+                 item["checker_params"], item["sort_order"], item.get("notes"))
             )
     log.info("Checklist starter items seeded.")
+
+
+def _backfill_checklist_notes():
+    """Fill in notes for the import-related and timing-client items on databases that were
+    already seeded before the notes column existed. Only replaces a row's
+    notes when they're still blank or match a known-old auto-generated
+    version of this text (e.g. the single-line text this note used before
+    bullets were added) -- a note edited by hand to something else is left
+    alone, same "don't silently re-add what's been edited" rule as
+    _seed_checklist_items."""
+    schedule_note = CHECKLIST_IMPORT_LOCATION_NOTE
+    session_note = CHECKLIST_IMPORT_LOCATION_NOTE + "\nOptional -- not required for the schedule import above."
+    old_schedule_note = (
+        "Looks for Meet Manager CSVs in Documents\\ (on whichever machine runs "
+        "the server) or anywhere under \\\\CSAC-001\\swmeets8\\racenumbers."
+    )
+    old_session_note = old_schedule_note + " Optional -- not required for the schedule import above."
+    with get_write_conn() as conn:
+        conn.execute(
+            "UPDATE checklist_items SET notes=? "
+            "WHERE label='Schedule imported for active meet' "
+            "AND (notes IS NULL OR notes='' OR notes=?)",
+            (schedule_note, old_schedule_note)
+        )
+        conn.execute(
+            "UPDATE checklist_items SET notes=? "
+            "WHERE label='Session report imported (optional)' "
+            "AND (notes IS NULL OR notes='' OR notes=?)",
+            (session_note, old_session_note)
+        )
+        conn.execute(
+            "UPDATE checklist_items SET notes=? "
+            "WHERE label='Timing machine clients' AND (notes IS NULL OR notes='')",
+            (CHECKLIST_TIMING_CLIENTS_NOTE,)
+        )
 
 
 def get_checklist_items(active_only=True):

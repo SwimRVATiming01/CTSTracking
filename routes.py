@@ -191,6 +191,8 @@ DASHBOARD_HTML = """
 
     /* Dolphin match history — available on hover instead of stacked */
     .has-history { border-bottom: 1px dotted currentColor; cursor: help; }
+    .dolphin-src { font-size: 9px; opacity: 0.6; letter-spacing: 0.5px; }
+    .dolphin-src.d5 { color: #6bc5ff; opacity: 0.85; }
 
     /* Delta */
     .late   { color: #ff6b6b; font-weight: bold; }
@@ -271,6 +273,10 @@ DASHBOARD_HTML = """
                         font-size:12px; vertical-align:middle; }
     .checklist-table tr:hover td { background:#222; }
     .checklist-item-manual { color:#888; font-size:9px; margin-left:6px; }
+    .checklist-item-label { font-weight:bold; font-size:13px; }
+    .checklist-item-note { color:#888; font-size:10px; margin-top:3px; font-weight:normal; }
+    .checklist-item-note div { margin-top:2px; }
+    .checklist-note-list { margin:2px 0 0 0; padding-left:16px; list-style:disc; }
     .checklist-status { display:flex; align-items:center; gap:6px; font-size:11px; }
     .cl-dot { display:inline-block; width:9px; height:9px; border-radius:50%; flex-shrink:0; }
     .cl-dot.ok      { background:#6bff6b; }
@@ -1236,7 +1242,11 @@ function raceNumCell(row) {
 // Dolphin cell shows only the current matched number — full CTS->Dolphin
 // match history (across re-swims) is available on hover, not stacked inline.
 function dolphinCell(row) {
-  const val = (row.dolphin_race_num !== null && row.dolphin_race_num !== undefined) ? row.dolphin_race_num : '—';
+  const has = v => v !== null && v !== undefined;
+  const parts = [];
+  if (has(row.dolphin_race_num))  parts.push(row.dolphin_race_num + ' <span class="dolphin-src">D4</span>');
+  if (has(row.dolphin5_race_num)) parts.push(row.dolphin5_race_num + ' <span class="dolphin-src d5">D5</span>');
+  const val = parts.length ? parts.join('<br>') : '—';
   const history = row.dolphin_num_history ? row.dolphin_num_history.split('\\n') : [];
   const classes = [];
   if (row.dolphin_gap_flag) classes.push('gap-flag');
@@ -1763,6 +1773,29 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+function renderNoteLines(text) {
+  const lines = text.split('\\n');
+  let html = '';
+  let bullets = [];
+  const flushBullets = () => {
+    if (bullets.length) {
+      html += '<ul class="checklist-note-list">' +
+        bullets.map(l => '<li>' + escapeHtml(l) + '</li>').join('') + '</ul>';
+      bullets = [];
+    }
+  };
+  lines.forEach(line => {
+    if (line.startsWith('- ')) {
+      bullets.push(line.slice(2));
+    } else {
+      flushBullets();
+      html += '<div>' + escapeHtml(line) + '</div>';
+    }
+  });
+  flushBullets();
+  return html;
+}
+
 function loadChecklist() {
   fetch('/api/checklist')
     .then(r => r.json())
@@ -1776,6 +1809,8 @@ function loadChecklist() {
           ' onchange="toggleChecklistItem(' + item.id + ', this.checked)">';
         const manualTag = item.category === 'manual'
           ? '<span class="checklist-item-manual">MANUAL</span>' : '';
+        const noteLine = item.notes
+          ? '<div class="checklist-item-note">' + renderNoteLines(item.notes) + '</div>' : '';
         let status = '<span style="color:#555">—</span>';
         if (item.category === 'auto') {
           const cls = item.auto_status === 'ok' ? 'ok'
@@ -1792,7 +1827,8 @@ function loadChecklist() {
         }
         return '<tr>' +
           '<td>' + checkbox + '</td>' +
-          '<td class="left">' + item.label + manualTag + '</td>' +
+          '<td class="left"><div class="checklist-item-label">' + item.label + manualTag +
+            '</div>' + noteLine + '</td>' +
           '<td class="left">' + status + '</td>' +
           '</tr>';
       }).join('');
@@ -2751,6 +2787,7 @@ def api_heartbeat():
             "share_ok":       data.get("share_ok"),
             "dolphin_ok":     data.get("dolphin_ok"),
             "cts_ok":         data.get("cts_ok"),
+            "dolphin5_running": data.get("dolphin5_running"),
         }
     return jsonify({"ok": True})
 
@@ -2775,6 +2812,7 @@ def _client_rows():
                 "share_ok":       c["share_ok"],
                 "dolphin_ok":     c["dolphin_ok"],
                 "cts_ok":         c["cts_ok"],
+                "dolphin5_running": c["dolphin5_running"],
             }
             for c in _clients.values()
         ]
