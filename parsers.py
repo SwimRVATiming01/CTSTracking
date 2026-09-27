@@ -127,7 +127,7 @@ def parse_dolphin5_xml_filename(filename):
     stem = os.path.splitext(filename)[0]
 
     m = re.match(
-        r"^(\d+)_Event_(\d*)_Heat_(\d+)_Race_(\d+)_\d+_\d+_\d+_\d+_\d+"
+        r"^(\d+)_Event_(\d*)_Heat_(\d+)_Race_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)"
         r"(?:__(.+)__(\d{8}T\d{6}))?$",
         stem
     )
@@ -143,16 +143,24 @@ def parse_dolphin5_xml_filename(filename):
     result["heat_number"] = str(int(m.group(3)))
     result["dolphin_race_num"] = int(m.group(4))
 
-    machine_id, timestamp = m.group(5), m.group(6)
+    machine_id, timestamp = m.group(10), m.group(11)
     if machine_id and timestamp:
         result["machine_id"] = machine_id
         try:
             result["file_time"] = datetime.strptime(timestamp, "%Y%m%dT%H%M%S")
         except ValueError:
             log.warning(f"Bad timestamp in Dolphin5 XML filename: {filename}")
-        result["original_name"] = stem[:m.start(5) - 2]  # strip "__machine__timestamp"
+        result["original_name"] = stem[:m.start(10) - 2]  # strip "__machine__timestamp"
     else:
         result["original_name"] = stem
+
+    # Last-resort time: Dolphin5's own m_d_y_h_min in the name (minute precision only).
+    if result["file_time"] is None:
+        mo, d, y, h, mi = (int(m.group(i)) for i in range(5, 10))
+        try:
+            result["file_time"] = datetime(y, mo, d, h, mi)
+        except ValueError:
+            pass
 
     return result
 
@@ -301,11 +309,19 @@ def parse_dolphin5_xml_file(filepath):
     heat_text = (root.findtext("HeatNumber") or "").strip()
     result["heat_number"] = heat_text or None
 
+    # Dolphin5 writes <Time> in the host PC's Windows regional date format,
+    # so it differs between machines (seen: "2026-09-26 12:52:39 PM" and
+    # "9/26/2026 5:28:43 PM").
     time_text = (root.findtext("Time") or "").strip()
     if time_text:
-        try:
-            result["precise_time"] = datetime.strptime(time_text, "%Y-%m-%d %I:%M:%S %p")
-        except ValueError:
+        for fmt in ("%Y-%m-%d %I:%M:%S %p", "%m/%d/%Y %I:%M:%S %p",
+                    "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+            try:
+                result["precise_time"] = datetime.strptime(time_text, fmt)
+                break
+            except ValueError:
+                continue
+        else:
             log.warning(f"Bad <Time> value in Dolphin5 XML file {filepath}: {time_text!r}")
 
     for lane_el in root.findall("./Lanes/Lane"):

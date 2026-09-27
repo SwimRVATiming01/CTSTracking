@@ -1106,17 +1106,31 @@ CHECKLIST_IMPORT_LOCATION_NOTE = (
 )
 
 
-CHECKLIST_TIMING_CLIENTS_NOTE = (
-    "client.py -- Dolphin4 and GEN7 machines:\n"
-    "- Copy client.py from the CTSTracking repo to the machine and run it (needs Python + psutil)\n"
-    "- Relays .do3 from C:\\CTSDolphin to \\\\CSAC-001\\swmeets8\\racenumbers, heartbeat every 30s\n"
-    "- Shows up here under the machine's computer name\n"
+_TIMING_CLIENTS_NOTE_REST = (
     "Dolphin5_OnePool.ahk -- Dolphin5 machine (one per pool):\n"
     "- Run from G:\\Shared drives\\#Meet Management\\Timing Maintenance\\Autohotkeys\\"
     "Dolphin (and maybe some Meet Manager)\\\n"
     "- CTS_TRACKER_URL at the top must point at this server (http://<server-ip>:5000/api/heartbeat)\n"
     "- Shows up here as <COMPUTERNAME>_DOLPHIN5_AHK; fails this item if offline or Dolphin5 is closed\n"
     "- Closes Dolphin5's reset dialog; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps"
+)
+
+# Earlier wording, replaced automatically on startup if still unedited.
+_OLD_TIMING_CLIENTS_NOTE = (
+    "client.py -- Dolphin4 and GEN7 machines:\n"
+    "- Copy client.py from the CTSTracking repo to the machine and run it (needs Python + psutil)\n"
+    "- Relays .do3 from C:\\CTSDolphin to \\\\CSAC-001\\swmeets8\\racenumbers, heartbeat every 30s\n"
+    "- Shows up here under the machine's computer name\n"
+    + _TIMING_CLIENTS_NOTE_REST
+)
+
+CHECKLIST_TIMING_CLIENTS_NOTE = (
+    "client.py -- required on the Dolphin4 machine (only when Dolphin4 is in use):\n"
+    "- Copy client.py from the CTSTracking repo to the machine and run it (needs Python + psutil)\n"
+    "- Only path for Dolphin4 .do3 to reach CTSTracking (relays C:\\CTSDolphin to \\\\CSAC-001\\swmeets8\\racenumbers)\n"
+    "- Optional on the GEN7 machine: heartbeat/status only (Vicreo, AHK scripts, share access)\n"
+    "- Not needed for Dolphin5; shows up here under the machine's computer name\n"
+    + _TIMING_CLIENTS_NOTE_REST
 )
 
 
@@ -1223,8 +1237,8 @@ def _backfill_checklist_notes():
         )
         conn.execute(
             "UPDATE checklist_items SET notes=? "
-            "WHERE label='Timing machine clients' AND (notes IS NULL OR notes='')",
-            (CHECKLIST_TIMING_CLIENTS_NOTE,)
+            "WHERE label='Timing machine clients' AND (notes IS NULL OR notes='' OR notes=?)",
+            (CHECKLIST_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE)
         )
 
 
