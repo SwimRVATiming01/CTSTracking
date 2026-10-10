@@ -792,13 +792,14 @@ DASHBOARD_HTML = """
 
   <div class="peripherals-group-title">DOLPHIN5</div>
   <div class="obs-row">
-    <button class="obs-btn obs-btn-start" onclick="dolphin5Start()">&#9654; Start TCP Control</button>
-    <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;">Not started this session</span>
+    <label>TCP Control</label>
+    <button class="obs-btn" id="dolphin5-toggle" onclick="dolphin5Toggle()">--</button>
+    <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;"></span>
   </div>
   <div style="font-size:11px;color:#888;max-width:700px;">
     Sends <code>setEventAndHeat</code> to each pool's Dolphin5 unit to follow GEN7's real progress.
-    Starting is a one-way switch for this running session (no separate stop) &mdash; restart the
-    server to fully stop it. Nothing is sent until this is started.
+    Off drops both connections and sends nothing. Starts ON at every server restart
+    (<code>DOLPHIN5_TCP_ENABLED</code> in config.py).
   </div>
 
   <div class="obs-panels">
@@ -2133,8 +2134,13 @@ function loadDolphin5Status() {
   fetch('/api/dolphin5/status')
     .then(r => r.json())
     .then(data => {
+      dolphin5Running = data.running;
+      const btn = document.getElementById('dolphin5-toggle');
+      btn.textContent = data.running ? 'ON' : 'OFF';
+      btn.style.background = data.running ? '#1a4a1a' : '#4a1a1a';
+      btn.style.color = data.running ? '#6bff6b' : '#ff6b6b';
       const label = document.getElementById('dolphin5-running-label');
-      label.textContent = data.running ? 'Running this session' : 'Not started this session';
+      label.textContent = data.running ? 'Following GEN7' : 'Not sending to Dolphin5';
       label.style.color = data.running ? '#6bff6b' : '#888';
       _renderDolphin5Pool(1, data.pool1, data.configs && data.configs['1']);
       _renderDolphin5Pool(2, data.pool2, data.configs && data.configs['2']);
@@ -2221,8 +2227,13 @@ function dolphin5LoadEvents(num) {
     .catch(e => { label.textContent = 'Request failed: ' + e; label.style.color = '#f44336'; });
 }
 
-function dolphin5Start() {
-  fetch('/api/dolphin5/start', { method: 'POST' }).then(() => loadDolphin5Status());
+let dolphin5Running = null;
+
+function dolphin5Toggle() {
+  if (dolphin5Running && !confirm('Turn Dolphin5 TCP control OFF?\\n\\n' +
+      'Both pools stop following GEN7 until it is turned back on.')) return;
+  fetch(dolphin5Running ? '/api/dolphin5/stop' : '/api/dolphin5/start', { method: 'POST' })
+    .then(() => loadDolphin5Status());
 }
 
 // ---------------------------------------------------------------------------
@@ -3167,8 +3178,15 @@ def api_dolphin5_config():
 
 @app.route("/api/dolphin5/start", methods=["POST"])
 def api_dolphin5_start():
-    """Start Dolphin5 TCP control for this running session. Idempotent."""
+    """Turn Dolphin5 TCP control on. Idempotent."""
     dolphin5_control.start()
+    return jsonify({"running": dolphin5_control.is_running()})
+
+
+@app.route("/api/dolphin5/stop", methods=["POST"])
+def api_dolphin5_stop():
+    """Stop Dolphin5 TCP control: chase off, connections dropped. Idempotent."""
+    dolphin5_control.stop()
     return jsonify({"running": dolphin5_control.is_running()})
 
 

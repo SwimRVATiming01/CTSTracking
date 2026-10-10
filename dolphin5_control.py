@@ -52,6 +52,9 @@ _state = {}              # pool_num -> diagnostic status dict, see get_connectio
 _state_lock = threading.Lock()
 _connections = {}        # pool_num -> live _Dolphin5Connection
 _connections_lock = threading.Lock()
+# Each start() gets its own stop event, handed to that run's threads, so a
+# stop() followed quickly by start() can't leave old threads running
+# alongside the new ones.
 _stop_event = threading.Event()
 _started = False
 _started_lock = threading.Lock()
@@ -197,14 +200,15 @@ def force_reconnect(pool_num):
         conn.close()
 
 
-def _connection_supervisor(pool_num):
-    """Keep exactly one connection alive per pool, reconnecting on drop."""
-    while not _stop_event.is_set():
+def _connection_supervisor(pool_num, stop):
+    """Keep exactly one connection alive per pool, reconnecting on drop,
+    until this run's stop event is set."""
+    while not stop.is_set():
         cfg = _effective_config(pool_num)
         host, port = cfg.get("host"), cfg.get("port")
         if not host or not port:
             log.debug(f"Dolphin5 pool {pool_num}: no host/port configured yet, waiting")
-            time.sleep(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
+            stop.wait(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
             continue
 
         conn = _Dolphin5Connection(pool_num, host, port, on_message=_on_message)
@@ -216,27 +220,34 @@ def _connection_supervisor(pool_num):
                 f"Dolphin5 pool {pool_num}: connect failed ({e}), "
                 f"retrying in {config.DOLPHIN5_RECONNECT_DELAY_SECONDS}s"
             )
-            time.sleep(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
+            stop.wait(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
             continue
 
+        if stop.is_set():
+            # stop() landed while we were connecting.
+            conn.close()
+            break
         with _connections_lock:
             _connections[pool_num] = conn
         with _state_lock:
             _state[pool_num]["connected"] = True
         log.info(f"Dolphin5 pool {pool_num}: connected to {host}:{port}")
 
-        while conn.is_connected() and not _stop_event.is_set():
+        while conn.is_connected() and not stop.is_set():
             time.sleep(0.5)
 
+        with _connections_lock:
+            if _connections.get(pool_num) is conn:
+                del _connections[pool_num]
         with _state_lock:
             _state[pool_num]["connected"] = False
         conn.close()
-        if not _stop_event.is_set():
+        if not stop.is_set():
             log.warning(
                 f"Dolphin5 pool {pool_num}: disconnected, "
                 f"reconnecting in {config.DOLPHIN5_RECONNECT_DELAY_SECONDS}s"
             )
-            time.sleep(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
+            stop.wait(config.DOLPHIN5_RECONNECT_DELAY_SECONDS)
 
 
 _warned_disconnected = set()  # pool_nums already warned about, until reconnected -- logging noise reduction only, no correctness impact if this races
@@ -286,9 +297,11 @@ def _send_set_event_and_heat(pool_num, event_id, heat):
     return True
 
 
-def _chase_loop():
+def _chase_loop(stop):
     """
-    Polls get_current_heat_state() every DOLPHIN5_POLL_INTERVAL_SECONDS.
+    Polls get_current_heat_state() every DOLPHIN5_POLL_INTERVAL_SECONDS and
+    follows only Companion-sourced values (fresh within 30s); with no fresh
+    Companion post, Dolphin5 is left where it is.
 
     Debounced, not immediate: a changed (event, heat) value starts (or
     updates) a per-pool candidate, and setEventAndHeat is only sent once
@@ -302,7 +315,7 @@ def _chase_loop():
     candidates = {}   # pool_num -> (value, first_seen_monotonic)
     last_sent = {}    # pool_num -> value already pushed to Dolphin5
 
-    while not _stop_event.is_set():
+    while not stop.is_set():
         active = get_active_meet()
         if active:
             state = get_current_heat_state(active["meet_id"])
@@ -310,6 +323,12 @@ def _chase_loop():
             for pool_num, key in ((1, "pool1"), (2, "pool2")):
                 pool_state = state.get(key) or {}
                 if not pool_state.get("active"):
+                    continue
+                # Only chase a fresh Companion value. get_current_heat_state's
+                # schedule fallback guesses the next heat from BOTH pools'
+                # results, which could push this pool's Dolphin5 to the other
+                # pool's heat -- when Companion goes quiet, hold still instead.
+                if pool_state.get("source") != "companion":
                     continue
                 value = (pool_state.get("current_event"), pool_state.get("current_heat"))
                 if value == (None, None):
@@ -322,14 +341,16 @@ def _chase_loop():
                 settled = (now - first_seen) >= config.DOLPHIN5_CHASE_DEBOUNCE_SECONDS
                 if held_value != last_sent.get(pool_num) and settled:
                     event_id, heat = held_value
+                    if stop.is_set():
+                        break
                     if _send_set_event_and_heat(pool_num, event_id, heat):
                         last_sent[pool_num] = held_value
 
-        time.sleep(config.DOLPHIN5_POLL_INTERVAL_SECONDS)
+        stop.wait(config.DOLPHIN5_POLL_INTERVAL_SECONDS)
 
 
 def is_running():
-    """Whether start() has been called yet this process (idempotent check)."""
+    """Whether TCP control is currently on."""
     return _started
 
 
@@ -337,27 +358,46 @@ def start():
     """
     Start one persistent connection per pool plus the chase-loop thread.
 
-    Called explicitly — either config-gated at boot from cts_tracker.py, or
-    on demand via the dashboard's Dolphin5 panel (see routes.py) so TCP
-    control can be turned on for a running session without a full server
-    restart. Not an import-time auto-start either way — this is the one
-    module that writes to live hardware the moment it runs; an implicit
-    auto-start would make that side effect invisible to anyone reading the
-    startup sequence. Idempotent: safe to call more than once (e.g. a
-    dashboard button clicked twice) — only the first call does anything.
+    Called explicitly — config-gated at boot from cts_tracker.py, or from
+    the dashboard's on/off toggle (see routes.py). Not an import-time
+    auto-start — this is the one module that writes to live hardware the
+    moment it runs; an implicit auto-start would make that side effect
+    invisible to anyone reading the startup sequence. Idempotent.
     """
-    global _started
+    global _started, _stop_event
     with _started_lock:
         if _started:
             log.info("Dolphin5 control start() called again, already running — ignoring")
             return
         _started = True
+        _stop_event = threading.Event()
+        stop = _stop_event
 
     for pool_num in config.DOLPHIN5_CONFIGS:
         _init_state(pool_num)
-        threading.Thread(target=_connection_supervisor, args=(pool_num,), daemon=True).start()
-    threading.Thread(target=_chase_loop, daemon=True).start()
+        threading.Thread(target=_connection_supervisor, args=(pool_num, stop), daemon=True).start()
+    threading.Thread(target=_chase_loop, args=(stop,), daemon=True).start()
     log.info("Dolphin5 control started (chase-GEN7 TCP control)")
+
+
+def stop():
+    """Turn TCP control off: stop the chase loop and drop both connections.
+    Nothing is sent to Dolphin5 on the way out. Idempotent."""
+    global _started
+    with _started_lock:
+        if not _started:
+            return
+        _started = False
+        _stop_event.set()
+    with _connections_lock:
+        conns = list(_connections.values())
+        _connections.clear()
+    for conn in conns:
+        conn.close()
+    with _state_lock:
+        for s in _state.values():
+            s["connected"] = False
+    log.info("Dolphin5 control stopped (dashboard toggle)")
 
 
 def get_connection(pool_num):

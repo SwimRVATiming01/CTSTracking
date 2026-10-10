@@ -83,10 +83,12 @@ DOLPHIN5_XML_EXTENSION = ".xml"
 # to leave on by default, unlike DOLPHIN5_TCP_ENABLED below.
 INGEST_DOLPHIN5_XML_ENABLED = True
 
-# Master switch for the "chase GEN7" TCP control feature (dolphin5_control.py).
-# This is the only part of the Dolphin5 feature that writes to live hardware,
-# so it defaults OFF until deliberately enabled per venue.
-DOLPHIN5_TCP_ENABLED = False
+# Whether the "chase GEN7" TCP control (dolphin5_control.py) starts ON at
+# server startup. It's the only part of the Dolphin5 feature that writes to
+# live hardware; it can be switched on/off any time from the Peripherals
+# toggle, which resets to this value on every restart. Set False on a test
+# copy of the server so it can't drive the live Dolphin5 units.
+DOLPHIN5_TCP_ENABLED = True
 
 # Per-pool Dolphin5 unit connection info. host/port are just hardcoded
 # fallbacks used only until something's been saved via the dashboard's

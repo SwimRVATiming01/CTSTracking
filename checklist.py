@@ -163,7 +163,7 @@ def _check_session_report_imported(params, context):
 
 def _check_dolphin5_connected(params, context):
     if not dolphin5_control.is_running():
-        return False, "TCP control not started"
+        return False, "TCP control OFF"
     lines = []
     any_connected = False
     for pool in (1, 2):

@@ -36,7 +36,7 @@ def load_events(pool_num):
     """Clear and reload events 1..EVENT_COUNT. Returns (ok, message)."""
     conn = dolphin5_control.get_connection(pool_num)
     if not conn or not conn.is_connected():
-        return False, f"Pool {pool_num} Dolphin5 not connected (is TCP control started?)"
+        return False, f"Pool {pool_num} Dolphin5 not connected (is TCP control ON?)"
     if not _load_lock.acquire(blocking=False):
         return False, "An event load is already in progress"
     try:
