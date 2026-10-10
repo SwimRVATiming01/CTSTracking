@@ -113,7 +113,23 @@ def warn_popup(message):
 
 
 def get_timing_ip():
-    """This machine's 172.16.0.x address, or None if it has none."""
+    """This machine's 172.16.0.x address, or None if it has none.
+
+    Prefers the address Windows actually routes to the share server over,
+    since a machine can have extra 172.16.0.x addresses on unused adapters
+    (CSAC-009 reported .83 while really reachable at .84, 2026-10-10).
+    A UDP connect sends no packets -- it just asks for the route.
+    """
+    share_host = SERVER_WATCH_FOLDER.lstrip("\\").split("\\")[0]
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect((socket.gethostbyname(share_host), 445))
+            ip = s.getsockname()[0]
+        if ip.startswith(TIMING_NETWORK_PREFIX):
+            return ip
+    except OSError:
+        pass
+
     candidates = []
     if _PSUTIL:
         try:
