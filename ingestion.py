@@ -762,6 +762,7 @@ def _parse_session_report(filepath):
             if event_num.isdigit() and event_name and current_session:
                 starts_at_raw = row[config.MM_COL_SR_STARTS_AT].strip()
                 events[event_num] = {
+                    "event_name": event_name,
                     "session": current_session,
                     "starts_at": _parse_time_to_24h(starts_at_raw) if starts_at_raw else None,
                 }
@@ -791,6 +792,17 @@ def _apply_session_map(events, meet_id, filename):
                 conn.execute(
                     "UPDATE schedule SET session_report_start=? WHERE meet_id=? AND event_id=? AND heat=?",
                     (info["starts_at"], meet_id, event_id, "1")
+                )
+            # Backup copy of the event name (the meet program's stays primary),
+            # kept even for events with no schedule rows -- see get_event_names.
+            if info.get("event_name"):
+                conn.execute(
+                    """INSERT INTO session_report_events (meet_id, event_id, event_name, session, imported_at)
+                       VALUES (?,?,?,?,datetime('now'))
+                       ON CONFLICT(meet_id, event_id) DO UPDATE SET
+                         event_name=excluded.event_name, session=excluded.session,
+                         imported_at=excluded.imported_at""",
+                    (meet_id, event_id, info["event_name"], info["session"])
                 )
 
     if unmatched:

@@ -206,6 +206,18 @@ CREATE TABLE IF NOT EXISTS dolphin5_config (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Event names as listed in MM's Session Report: a backup to schedule.event_name
+-- (from the Meet Program), and the only name source for an event that's in
+-- the Session Report but not the Meet Program.
+CREATE TABLE IF NOT EXISTS session_report_events (
+    meet_id     TEXT NOT NULL,
+    event_id    TEXT NOT NULL,
+    event_name  TEXT NOT NULL,
+    session     TEXT,
+    imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (meet_id, event_id)
+);
+
 CREATE TABLE IF NOT EXISTS companion_config (
     pool_num    INTEGER PRIMARY KEY,
     host        TEXT,
@@ -1326,6 +1338,24 @@ def save_dolphin5_config(pool_num, host=None, port=None):
                DO UPDATE SET host=excluded.host, port=excluded.port, updated_at=excluded.updated_at""",
             (pool_num, host, port)
         )
+
+
+# ===========================================================================
+# EVENT NAMES
+# ===========================================================================
+
+def get_event_names(meet_id):
+    """{event_id: name} for every event known from either MM report. The
+    Meet Program's name (schedule.event_name) wins; the Session Report's
+    fills in events the Meet Program doesn't have."""
+    with get_conn() as conn:
+        names = {r["event_id"]: r["event_name"] for r in conn.execute(
+            "SELECT event_id, event_name FROM session_report_events WHERE meet_id=?", (meet_id,))}
+        for r in conn.execute(
+                "SELECT DISTINCT event_id, event_name FROM schedule WHERE meet_id=? AND event_name IS NOT NULL AND event_name != ''",
+                (meet_id,)):
+            names[r["event_id"]] = r["event_name"]
+    return names
 
 
 # ===========================================================================
