@@ -21,7 +21,8 @@ log = logging.getLogger("cts_tracker")
 
 class IngestHandler(FileSystemEventHandler):
     """
-    Fires when a file is created or moved into the watch folder.
+    Fires when a file is created or moved into the watch folder, or (CSVs
+    only) when an existing one is overwritten.
     Debounces to avoid reading files still being written.
     Routes to the correct ingest function based on file extension.
     """
@@ -54,6 +55,16 @@ class IngestHandler(FileSystemEventHandler):
     def on_moved(self, event):
         if not event.is_directory:
             self._schedule(event.dest_path)
+
+    def on_modified(self, event):
+        # Overwrites only count for CSVs: re-exporting a Meet Manager report
+        # under the same filename replaces the file in place, which never
+        # fires on_created. Other types (e.g. Dolphin5's CurrentSettings.xml)
+        # get rewritten constantly and must stay create-only. Each write
+        # pushes the debounce back, so a slow network save fires once.
+        if not event.is_directory and \
+                os.path.splitext(event.src_path)[1].lower() == config.SCHEDULE_EXTENSION.lower():
+            self._schedule(event.src_path)
 
     def _schedule(self, path):
         with self._lock:
