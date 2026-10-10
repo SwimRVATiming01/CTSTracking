@@ -751,6 +751,45 @@ DASHBOARD_HTML = """
 
   </div>
 
+  <div class="peripherals-group-title">BITFOCUS COMPANION</div>
+  <div style="font-size:11px;color:#888;max-width:700px;">
+    Requests are matched to a Companion by the IP they come from. The streaming PC's Companion
+    is fixed in config.py; set each pool's here when it moves to another computer.
+  </div>
+  <div class="obs-panels">
+    <div class="obs-panel">
+      <div class="obs-panel-title">Companion &mdash; Pool 1</div>
+      <div class="obs-row">
+        <label>Host</label>
+        <input id="companion-1-host" class="obs-input obs-input-mid" type="text" placeholder="e.g. 172.16.0.x">
+        <label>Port</label>
+        <input id="companion-1-port" class="obs-input obs-input-sm" type="number" placeholder="8000">
+        <button class="obs-btn" onclick="companionSaveConfig(1)">Save</button>
+      </div>
+      <div class="obs-status-row"><div class="obs-indicator"><span class="obs-dot off" id="companion-pool1-dot"></span><span id="companion-pool1-label" style="color:#888">--</span></div></div>
+      <div class="obs-row"><label>Last heard</label><span id="companion-pool1-heard" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+    </div>
+    <div class="obs-panel">
+      <div class="obs-panel-title">Companion &mdash; Pool 2</div>
+      <div class="obs-row">
+        <label>Host</label>
+        <input id="companion-2-host" class="obs-input obs-input-mid" type="text" placeholder="e.g. 172.16.0.x">
+        <label>Port</label>
+        <input id="companion-2-port" class="obs-input obs-input-sm" type="number" placeholder="8000">
+        <button class="obs-btn" onclick="companionSaveConfig(2)">Save</button>
+      </div>
+      <div class="obs-status-row"><div class="obs-indicator"><span class="obs-dot off" id="companion-pool2-dot"></span><span id="companion-pool2-label" style="color:#888">--</span></div></div>
+      <div class="obs-row"><label>Last heard</label><span id="companion-pool2-heard" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+    </div>
+    <div class="obs-panel">
+      <div class="obs-panel-title">Companion &mdash; Streaming</div>
+      <div class="obs-row"><label>Host</label><span id="companion-streaming-addr" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+      <div class="obs-status-row"><div class="obs-indicator"><span class="obs-dot off" id="companion-streaming-dot"></span><span id="companion-streaming-label" style="color:#888">--</span></div></div>
+      <div class="obs-row"><label>Last heard</label><span id="companion-streaming-heard" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+    </div>
+  </div>
+  <div id="companion-unassigned" style="font-size:11px;color:#ffb74d;max-width:700px;"></div>
+
   <div class="peripherals-group-title">DOLPHIN5</div>
   <div class="obs-row">
     <button class="obs-btn obs-btn-start" onclick="dolphin5Start()">&#9654; Start TCP Control</button>
@@ -954,7 +993,7 @@ function setView(v) {
   if (v === 'history') loadSnapshots();
   if (v === 'trends')  loadTrends();
   if (v === 'harvested') loadHarvestedTimes();
-  if (v === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
+  if (v === 'peripherals') { loadObsStatus(); loadDolphin5Status(); loadCompanionStatus(); }
   if (v === 'checklist') loadChecklist();
   if (v === 'settings') updateScheduleToggleButtons();
 }
@@ -1831,11 +1870,19 @@ function loadChecklist() {
             cls === 'unknown' ? 'Unknown' : cls === 'ok' ? 'OK' : 'Failed'
           );
           const lines = label.split('\\n');
+          // A line may start with [ok]/[fail]/[unknown] (see checklist._line)
+          // to get its own dot; untagged lines render as plain text.
+          const renderLine = l => {
+            const m = l.match(/^\\[(ok|fail|unknown)\\] (.*)$/);
+            return m ? '<span class="cl-dot ' + m[1] + '"></span>' + escapeHtml(m[2]) : escapeHtml(l);
+          };
           const body = lines.length > 1
-            ? '<ul class="checklist-detail-list">' + lines.map(l => '<li>' + escapeHtml(l) + '</li>').join('') + '</ul>'
-            : label;
-          status = '<span class="checklist-status">' +
-            '<span class="cl-dot ' + cls + '"></span>' + body + '</span>';
+            ? '<ul class="checklist-detail-list">' + lines.map(l => '<li>' + renderLine(l) + '</li>').join('') + '</ul>'
+            : renderLine(label);
+          // Multi-entry rows already show a dot per line, so skip the overall one.
+          const hasLineDots = lines.length > 1 || /^\\[(ok|fail|unknown)\\] /.test(label);
+          const mainDot = hasLineDots ? '' : '<span class="cl-dot ' + cls + '"></span>';
+          status = '<span class="checklist-status">' + mainDot + body + '</span>';
         }
         return '<tr>' +
           '<td>' + checkbox + '</td>' +
@@ -2179,6 +2226,76 @@ function dolphin5Start() {
 }
 
 // ---------------------------------------------------------------------------
+// COMPANION PEERS
+// ---------------------------------------------------------------------------
+
+function _agoText(s) {
+  if (s == null) return '—';
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + ' min ago';
+  return Math.round(s / 3600) + ' h ago';
+}
+
+function loadCompanionStatus() {
+  fetch('/api/companion_peers/status')
+    .then(r => r.json())
+    .then(data => {
+      ['pool1', 'pool2', 'streaming'].forEach(function(role) {
+        const p = data.peers[role];
+        const dot = document.getElementById('companion-' + role + '-dot');
+        const label = document.getElementById('companion-' + role + '-label');
+        if (!p.configured) {
+          dot.className = 'obs-dot off'; label.textContent = 'Not assigned'; label.style.color = '#888';
+        } else if (p.reachable === null) {
+          dot.className = 'obs-dot off'; label.textContent = 'Checking...'; label.style.color = '#888';
+        } else if (p.reachable) {
+          dot.className = 'obs-dot ok'; label.textContent = 'Reachable'; label.style.color = '#6bff6b';
+        } else {
+          dot.className = 'obs-dot off'; label.textContent = 'Unreachable'; label.style.color = '#f44336';
+          label.title = p.error || '';
+        }
+        document.getElementById('companion-' + role + '-heard').textContent =
+          p.last_heard_ago == null ? 'never (this run)' : _agoText(p.last_heard_ago) + ' (' + p.last_path + ')';
+        if (role === 'streaming') {
+          document.getElementById('companion-streaming-addr').textContent = p.host + ':' + p.port;
+        } else {
+          const num = role === 'pool1' ? 1 : 2;
+          const hostEl = document.getElementById('companion-' + num + '-host');
+          const portEl = document.getElementById('companion-' + num + '-port');
+          if (!hostEl.dataset.edited) hostEl.value = p.host || '';
+          if (!portEl.dataset.edited) portEl.value = p.port || '';
+        }
+      });
+      document.getElementById('companion-unassigned').textContent = data.unassigned.length
+        ? '⚠ Requests from unassigned IPs: ' + data.unassigned.map(u => u.ip + ' (' + _agoText(u.last_heard_ago) + ')').join(', ')
+        : '';
+    })
+    .catch(() => {});
+}
+
+['companion-1-host','companion-1-port','companion-2-host','companion-2-port'].forEach(function(id) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', function() { el.dataset.edited = '1'; });
+});
+
+function companionSaveConfig(num) {
+  const body = {};
+  body['pool' + num] = {
+    host: document.getElementById('companion-' + num + '-host').value.trim(),
+    port: document.getElementById('companion-' + num + '-port').value.trim()
+  };
+  fetch('/api/companion_peers/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(() => {
+    document.getElementById('companion-' + num + '-host').dataset.edited = '';
+    document.getElementById('companion-' + num + '-port').dataset.edited = '';
+    setTimeout(loadCompanionStatus, 500);  // give the immediate re-probe a moment
+  });
+}
+
+// ---------------------------------------------------------------------------
 // POLL
 // ---------------------------------------------------------------------------
 function poll() {
@@ -2188,7 +2305,7 @@ function poll() {
   else if (currentView === 'log') loadFullLog();
   else if (currentView === 'trends') loadTrends();
   else if (currentView === 'harvested') loadHarvestedTimes();
-  else if (currentView === 'peripherals') { loadObsStatus(); loadDolphin5Status(); }
+  else if (currentView === 'peripherals') { loadObsStatus(); loadDolphin5Status(); loadCompanionStatus(); }
   else if (currentView === 'checklist') loadChecklist();
   // history view is not auto-refreshed — it's read-only static data
 }
@@ -2549,6 +2666,36 @@ def api_dismiss_session_report_notice():
 # BITFOCUS COMPANION ENDPOINTS
 # ---------------------------------------------------------------------------
 
+import companion_peers
+
+
+@app.before_request
+def _record_companion_request():
+    # Which Companion sent this is known from its source IP alone, so
+    # Companion needs no per-machine identifier in its requests.
+    if request.path.startswith("/api/companion/") or request.path == "/api/companion":
+        companion_peers.record_request(request.remote_addr, request.path)
+
+
+@app.route("/api/companion_peers/status")
+def api_companion_peers_status():
+    return jsonify(companion_peers.get_status())
+
+
+@app.route("/api/companion_peers/config", methods=["POST"])
+def api_companion_peers_config():
+    """Save host/port for one pool's Companion. Persists across restarts."""
+    data = request.json or {}
+    for i in (1, 2):
+        key = f"pool{i}"
+        if key in data:
+            host = (data[key].get("host") or "").strip() or None
+            port = data[key].get("port")
+            port = int(port) if port not in (None, "") else None
+            companion_peers.update_config(i, host=host, port=port)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/companion/pool1")
 def api_companion_pool1():
     meet = get_active_meet()
@@ -2855,7 +3002,6 @@ def api_checklist():
     items = get_checklist_items()
     context = {
         "meet": meet,
-        "companion_connected": bool(companion_state.get_raw(1) or companion_state.get_raw(2)),
         "clients": _client_rows(),
     }
     items = checklist.evaluate_items(items, context)

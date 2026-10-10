@@ -205,6 +205,13 @@ CREATE TABLE IF NOT EXISTS dolphin5_config (
     port        INTEGER,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS companion_config (
+    pool_num    INTEGER PRIMARY KEY,
+    host        TEXT,
+    port        INTEGER,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -1314,6 +1321,30 @@ def save_dolphin5_config(pool_num, host=None, port=None):
     with get_write_conn() as conn:
         conn.execute(
             """INSERT INTO dolphin5_config (pool_num, host, port, updated_at)
+               VALUES (?,?,?,datetime('now'))
+               ON CONFLICT(pool_num)
+               DO UPDATE SET host=excluded.host, port=excluded.port, updated_at=excluded.updated_at""",
+            (pool_num, host, port)
+        )
+
+
+# ===========================================================================
+# COMPANION PEER CONFIG
+# ===========================================================================
+# Same idea as dolphin5_config: which computer runs each pool's Companion
+# can change meet to meet, so it's set from the dashboard and persisted.
+
+def get_companion_configs():
+    """Return {pool_num: {"host":.., "port":..}} for whatever's been saved."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT pool_num, host, port FROM companion_config").fetchall()
+    return {r["pool_num"]: {"host": r["host"], "port": r["port"]} for r in rows}
+
+
+def save_companion_config(pool_num, host=None, port=None):
+    with get_write_conn() as conn:
+        conn.execute(
+            """INSERT INTO companion_config (pool_num, host, port, updated_at)
                VALUES (?,?,?,datetime('now'))
                ON CONFLICT(pool_num)
                DO UPDATE SET host=excluded.host, port=excluded.port, updated_at=excluded.updated_at""",

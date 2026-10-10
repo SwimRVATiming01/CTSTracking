@@ -77,6 +77,10 @@ if __name__ == "__main__":
     else:
         log.info("Dolphin5 TCP control disabled (DOLPHIN5_TCP_ENABLED=False)")
 
+    # Read-only reachability probe of the three Bitfocus Companions.
+    import companion_peers
+    companion_peers.start()
+
     # Start Flask
     log.info(f"Dashboard available at http://{config.FLASK_HOST}:{config.FLASK_PORT}")
     log.info(f"On other LAN machines: http://<this-machine-ip>:{config.FLASK_PORT}")

@@ -129,6 +129,21 @@ DOLPHIN5_CONNECT_TIMEOUT_SECONDS = 5
 DOLPHIN5_RECONNECT_DELAY_SECONDS = 5
 
 # ---------------------------------------------------------------------------
+# BITFOCUS COMPANION PEERS
+# ---------------------------------------------------------------------------
+# Three Companions: one per pool, plus the streaming PC's (fed by Streamline,
+# posts event/heat for both pools). The streaming one never moves, so it's
+# fixed here; the pool ones can be on different computers meet to meet, so
+# their host/port is set from the dashboard (database.companion_config).
+COMPANION_STREAMING = {"host": "172.16.0.119", "port": 8888}
+COMPANION_DEFAULT_PORT = 8000
+
+# How often each Companion's web UI is probed for reachability, and how long
+# since its last request to CTSTracking before it counts as quiet.
+COMPANION_PROBE_INTERVAL_SECONDS = 15
+COMPANION_PROBE_TIMEOUT_SECONDS = 3
+
+# ---------------------------------------------------------------------------
 # BACKUP & SNAPSHOT SETTINGS
 # ---------------------------------------------------------------------------
 

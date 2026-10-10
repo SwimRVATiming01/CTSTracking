@@ -17,6 +17,7 @@ import os
 import re
 from datetime import datetime
 
+import companion_peers
 import database
 import dolphin5_control
 
@@ -74,8 +75,44 @@ def _check_schedule_imported(params, context):
 
 
 def _check_companion_connected(params, context):
-    ok = bool(context.get("companion_connected"))
-    return ok, ("Connected" if ok else "No Companion contact yet")
+    """Green when the streaming Companion and every assigned pool Companion
+    answer the reachability probe. An unassigned pool is noted, not failed
+    (a one-pool session only needs one)."""
+    status = companion_peers.get_status()
+    lines, ok = [], True
+    for role, name in (("streaming", "Streaming"), ("pool1", "Pool 1"), ("pool2", "Pool 2")):
+        p = status["peers"][role]
+        if not p["configured"]:
+            lines.append(_line(None, f"{name}: not assigned"))
+            continue
+        if p["reachable"] is None:
+            state = "checking..."
+            ok = False
+        elif p["reachable"]:
+            state = "reachable"
+        else:
+            state = "UNREACHABLE"
+            ok = False
+        heard = ("never heard this run" if p["last_heard_ago"] is None
+                 else f"last heard {_secs_ago(p['last_heard_ago'])}")
+        lines.append(_line(p["reachable"], f"{name}: {state} ({p['host']}:{p['port']}), {heard}"))
+    for u in status["unassigned"]:
+        lines.append(_line(None, f"Unassigned IP {u['ip']}: last heard {_secs_ago(u['last_heard_ago'])}"))
+    return ok, "\n".join(lines)
+
+
+def _line(ok, text):
+    """Tag one detail line so the checklist page gives it its own dot:
+    True = green, False = red, None = grey."""
+    return f"[{'ok' if ok else 'unknown' if ok is None else 'fail'}] {text}"
+
+
+def _secs_ago(s):
+    if s < 60:
+        return f"{s}s ago"
+    if s < 3600:
+        return f"{round(s / 60)} min ago"
+    return f"{round(s / 3600)} h ago"
 
 
 def _check_timing_clients(params, context):
@@ -105,7 +142,7 @@ def _check_timing_clients(params, context):
             problems.append("Vicreo not running")
         if problems:
             line += f" ({', '.join(problems)})"
-        lines.append(line)
+        lines.append(_line(c["online"] and not problems, line))
     return any_online and not dolphin5_problem, "\n".join(lines)
 
 
@@ -132,13 +169,13 @@ def _check_dolphin5_connected(params, context):
     for pool in (1, 2):
         cfg = dolphin5_control.get_effective_config(pool)
         if not cfg.get("host"):
-            lines.append(f"Pool {pool}: not configured")
+            lines.append(_line(None, f"Pool {pool}: not configured"))
             continue
         status = dolphin5_control.get_connection_status(pool)
         connected = bool(status.get("connected"))
         any_connected = any_connected or connected
         state = "connected" if connected else "not connected"
-        lines.append(f"Pool {pool}: {state} ({cfg['host']}:{cfg['port']})")
+        lines.append(_line(connected, f"Pool {pool}: {state} ({cfg['host']}:{cfg['port']})"))
     return any_connected, "\n".join(lines)
 
 
