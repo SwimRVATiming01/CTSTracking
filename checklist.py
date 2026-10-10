@@ -101,8 +101,6 @@ def _check_timing_clients(params, context):
             problems.append("share unreachable")
         if c.get("dolphin_ok") is False:
             problems.append("no Dolphin folder")
-        if c.get("cts_ok") is False:
-            problems.append("no CTS folder")
         if c.get("vicreo_running") is False:
             problems.append("Vicreo not running")
         if problems:

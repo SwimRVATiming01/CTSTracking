@@ -1,13 +1,15 @@
 """
 client.py - CTS Tracker Client
 ================================
-Runs on any timing machine (CTS, Dolphin, or both).
-Monitors local timing software output folders, captures file metadata,
-and forwards files to the server's network watch folder.
+Runs on any Dolphin timing machine (Dolphin4 or Dolphin5).
+Watches the local Dolphin output folder and copies race files to this
+machine's own subfolder on the server's network watch folder. Originals stay
+put -- Meet Manager ingests them locally.
 
 Setup:
-  No configuration required — watches both CTS and Dolphin folders automatically.
-  Run:  python client.py
+  No configuration required -- the share subfolder is named automatically
+  from this machine's 172.16.0.x address and computer name, and created on
+  first use. Run:  python client.py
 
 Requirements:
     pip install watchdog
@@ -19,6 +21,7 @@ import os
 import platform
 import shutil
 import socket
+import subprocess
 import sys
 import time
 import threading
@@ -43,20 +46,22 @@ except ImportError:
 # Machine ID pulled from Windows computer name
 MACHINE_ID = platform.node().replace(" ", "_") or "UNKNOWN"
 
-# CTS software saves .oxps files here (named by AHK: YYYY-MM-DD_HH-MM-SS.oxps)
-CTS_WATCH_FOLDER = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Documents", "CTS")
-
-# Dolphin software always saves .do3 files here
+# Dolphin4 (.do3) and Dolphin5 (.xml + .do3) both save here. Dolphin5 used to
+# write straight to the share, but crashed doing so (2026-10-10), so it now
+# writes locally and is relayed like Dolphin4.
 DOLPHIN_WATCH_FOLDER = r"C:\CTSDolphin"
-
-# NOTE: Dolphin5 is NOT relayed by client.py. Confirmed live 2026-08-02 that
-# Dolphin5 writes its .xml files directly to the network share itself (each
-# unit's own machine-named subfolder under WATCH_DIR) -- see
-# watchdog_monitor.py's recursive watch. Do not add a Dolphin5 watch folder
-# here; there is no local folder on a client.py-managed machine to watch.
 
 # Network path to server watch folder — same on every client machine
 SERVER_WATCH_FOLDER = r"\\CSAC-001\swmeets8\racenumbers"
+
+# Only addresses on the timing network count when naming the share subfolder
+# (rules out Wi-Fi and virtual adapters).
+TIMING_NETWORK_PREFIX = "172.16.0."
+
+# Dolphin5's own working files -- not race data, never forwarded.
+DOLPHIN5_SKIP_FILENAMES = {"currentsettings.xml"}
+
+DOLPHIN5_PROCESS_NAME = "dolphin50.exe"
 
 # Seconds to wait after detection before checking file readiness
 DEBOUNCE_SECONDS = 0.75
@@ -79,12 +84,17 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.log")
-        ),
+        # Next to the .exe when packaged (PyInstaller unpacks __file__ to a temp dir).
+        logging.FileHandler(os.path.join(
+            os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)),
+            "client.log",
+        )),
     ],
 )
 log = logging.getLogger("client")
+
+# Set at startup in __main__, once the helpers below exist.
+SHARE_SUBFOLDER = None
 
 # ===========================================================================
 # HELPERS
@@ -102,6 +112,50 @@ def warn_popup(message):
     threading.Thread(target=_show, daemon=True).start()
 
 
+def get_timing_ip():
+    """This machine's 172.16.0.x address, or None if it has none."""
+    candidates = []
+    if _PSUTIL:
+        try:
+            for addrs in psutil.net_if_addrs().values():
+                candidates += [a.address for a in addrs if a.family == socket.AF_INET]
+        except Exception:
+            pass
+    try:
+        candidates += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    for ip in candidates:
+        if ip.startswith(TIMING_NETWORK_PREFIX):
+            return ip
+    return None
+
+
+def get_share_subfolder_name():
+    """ip<last octet>_<computer name>, e.g. ip84_DOLPHIN-PC1. Each machine
+    gets its own subfolder so CTSTracking can tell units apart by folder."""
+    ip = get_timing_ip()
+    octet = ip.rsplit(".", 1)[1] if ip else "unknown"
+    return f"ip{octet}_{MACHINE_ID}"
+
+
+def dolphin5_running():
+    """True if Dolphin5 is running. Decides whether this is a Dolphin5
+    machine (forward .xml, keep .do3 local) or Dolphin4 (forward .do3)."""
+    if _PSUTIL:
+        try:
+            return any((p.info["name"] or "").lower() == DOLPHIN5_PROCESS_NAME
+                       for p in psutil.process_iter(["name"]))
+        except Exception:
+            pass
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {DOLPHIN5_PROCESS_NAME}", "/NH"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return DOLPHIN5_PROCESS_NAME in out.lower()
+    except Exception:
+        return False
+
+
 def get_file_ctime(filepath):
     """
     Get file creation time as datetime.
@@ -116,21 +170,19 @@ def get_file_ctime(filepath):
 
 def build_dest_filename(original_filename, machine_id, ctime=None):
     """
-    Build the forwarded filename with machine ID embedded.
+    Build the forwarded filename.
 
-    CTS (.oxps):    YYYY-MM-DD_HH-MM-SS.oxps  -> YYYY-MM-DD_HH-MM-SS__MACHINEID.oxps
-                    (timestamp already in name from AHK, just append machine ID)
+    Dolphin (.do3):  039-000-00F0073.do3 -> 039-000-00F0073__MACHINEID__YYYYMMDDTHHMMSS.do3
+                     (no timestamp in name, embed ctime)
 
-    Dolphin (.do3): 039-000-00F0073.do3        -> 039-000-00F0073__MACHINEID__YYYYMMDDTHHMMSS.do3
-                    (no timestamp in name, embed ctime)
+    Dolphin5 (.xml): unchanged -- CTSTracking parses the original name and
+                     takes the machine identity from the subfolder instead.
     """
     stem, ext = os.path.splitext(original_filename)
-
-    if ext.lower() == ".oxps":
-        return f"{stem}__{machine_id}{ext}"
-    else:  # .do3
-        timestamp = (ctime or datetime.now()).strftime("%Y%m%dT%H%M%S")
-        return f"{stem}__{machine_id}__{timestamp}{ext}"
+    if ext.lower() == ".xml":
+        return original_filename
+    timestamp = (ctime or datetime.now()).strftime("%Y%m%dT%H%M%S")
+    return f"{stem}__{machine_id}__{timestamp}{ext}"
 
 
 def wait_for_file_ready(filepath, stable_seconds=0.5, timeout=30, poll_interval=0.25):
@@ -173,14 +225,16 @@ def copy_to_server(src_path, dest_filename):
     Failures are logged but never crash the client or affect timing software.
     Returns True on success, False after all retries exhausted.
     """
-    dest_path = os.path.join(SERVER_WATCH_FOLDER, dest_filename)
+    dest_folder = os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER)
+    dest_path = os.path.join(dest_folder, dest_filename)
 
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             if not os.path.isdir(SERVER_WATCH_FOLDER):
                 raise OSError(f"Server watch folder not accessible: {SERVER_WATCH_FOLDER}")
+            os.makedirs(dest_folder, exist_ok=True)
             shutil.copy2(src_path, dest_path)
-            log.info(f"Forwarded: {dest_filename}")
+            log.info(f"Forwarded: {SHARE_SUBFOLDER}\\{dest_filename}")
             return True
         except OSError as e:
             if attempt < RETRY_ATTEMPTS:
@@ -227,7 +281,6 @@ def _gather_status():
     vicreo_running = None
     share_ok       = None
     dolphin_ok     = os.path.isdir(DOLPHIN_WATCH_FOLDER)
-    cts_ok         = os.path.isdir(CTS_WATCH_FOLDER)
 
     if _PSUTIL:
         try:
@@ -260,7 +313,6 @@ def _gather_status():
         "vicreo_running": vicreo_running,
         "share_ok":       share_ok,
         "dolphin_ok":     dolphin_ok,
-        "cts_ok":         cts_ok,
     }
 
 
@@ -302,12 +354,12 @@ def _heartbeat_loop():
 # WATCHDOG
 # ===========================================================================
 
-WATCHED_EXTENSIONS = {".oxps", ".do3"}
+WATCHED_EXTENSIONS = {".xml", ".do3"}
 
 
 class ForwardHandler(FileSystemEventHandler):
     """
-    Detects new .oxps and .do3 files in watched folders.
+    Detects new .xml and .do3 files in the Dolphin folder (and re-saved .xml).
     Captures ctime immediately on detection, debounces, then forwards.
     """
 
@@ -332,7 +384,8 @@ class ForwardHandler(FileSystemEventHandler):
         threading.Thread(target=loop, daemon=True).start()
 
     def _should_handle(self, filepath):
-        return os.path.splitext(filepath)[1].lower() in WATCHED_EXTENSIONS
+        return (os.path.splitext(filepath)[1].lower() in WATCHED_EXTENSIONS
+                and os.path.basename(filepath).lower() not in DOLPHIN5_SKIP_FILENAMES)
 
     def on_created(self, event):
         if not event.is_directory and self._should_handle(event.src_path):
@@ -348,11 +401,29 @@ class ForwardHandler(FileSystemEventHandler):
             with self._lock:
                 self._pending[event.dest_path] = (ctime, time.time() + DEBOUNCE_SECONDS)
 
+    def on_modified(self, event):
+        # Dolphin5 may re-save a race's .xml after an edit; resend it. .do3
+        # stays create-only. Each write pushes the debounce back.
+        path = event.src_path
+        if not event.is_directory and self._should_handle(path) \
+                and os.path.splitext(path)[1].lower() == ".xml":
+            with self._lock:
+                ctime = self._pending.get(path, (get_file_ctime(path), 0))[0]
+                self._pending[path] = (ctime, time.time() + DEBOUNCE_SECONDS)
+
     def _process(self, filepath, ctime):
         if not os.path.exists(filepath):
             log.warning(f"File gone before processing: {filepath}")
             return
         filename = os.path.basename(filepath)
+        # Dolphin5 writes both .xml and .do3 per race; CTSTracking only wants
+        # its .xml. Dolphin4 only writes .do3, which is still needed.
+        is_xml = filename.lower().endswith(".xml")
+        if is_xml != dolphin5_running():
+            reason = ("Dolphin5 running -- its .do3 stays local" if not is_xml
+                      else "Dolphin5 not running -- not a Dolphin5 race result")
+            log.info(f"Not forwarded: {filename} ({reason})")
+            return
         if not wait_for_file_ready(filepath):
             log.error(f"Skipping {filename}: file never became ready (still empty or changing)")
             return
@@ -412,12 +483,20 @@ if __name__ == "__main__":
         )
         sys.exit(0)
 
+    SHARE_SUBFOLDER = get_share_subfolder_name()
+
     log.info("=" * 50)
     log.info("CTS Tracker Client starting")
     log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
-    log.info(f"  CTS folder:  {CTS_WATCH_FOLDER}")
     log.info(f"  Dolphin folder: {DOLPHIN_WATCH_FOLDER}")
-    log.info(f"  Forwarding:  {SERVER_WATCH_FOLDER}")
+    log.info(f"  Forwarding:  {os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER)}")
+    if SHARE_SUBFOLDER.startswith("ipunknown_"):
+        log.warning(f"No {TIMING_NETWORK_PREFIX}x address found -- is Ethernet connected?")
+        warn_popup(
+            f"No timing-network ({TIMING_NETWORK_PREFIX}x) address found on this machine.\n\n"
+            f"Files will still be forwarded, to:\n  {SHARE_SUBFOLDER}\n\n"
+            f"Check the Ethernet cable, then restart the client."
+        )
     log.info("=" * 50)
 
     if not os.path.isdir(SERVER_WATCH_FOLDER):
@@ -437,7 +516,6 @@ if __name__ == "__main__":
     observer.daemon = True
     observer.start()
 
-    _watch_folder_with_retry(observer, handler, CTS_WATCH_FOLDER, "CTS")
     _watch_folder_with_retry(observer, handler, DOLPHIN_WATCH_FOLDER, "Dolphin")
 
     log.info("Watching for files... (Ctrl+C to stop)")

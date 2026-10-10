@@ -198,12 +198,10 @@ def start_watchdog():
     the server logs a warning and keeps retrying in the background.
 
     WATCH_DIR is watched recursively (SCHEDULE_DIR is not — CSVs still only
-    land flat there): Dolphin5 units write directly into their own
-    machine-named subfolder under WATCH_DIR rather than being relayed by
-    client.py, so files can now appear one level down. Existing GEN7/.gen,
-    Dolphin4/.do3, and legacy .oxps traffic is unaffected — those still land
-    flat in WATCH_DIR's root exactly as before; recursive just means
-    subfolders are ALSO seen, nothing about root-level handling changes.
+    land flat there): client.py copies Dolphin files (Dolphin5 .xml,
+    Dolphin4 .do3) into each machine's own ip<octet>_<computer name>
+    subfolder, so files appear one level down. GEN7 .gen still lands flat
+    in WATCH_DIR's root; recursive just means subfolders are ALSO seen.
 
     Uses PollingObserver rather than the native ReadDirectoryChangesW backend:
     WATCH_DIR is a UNC path, and that native backend's change-notification
