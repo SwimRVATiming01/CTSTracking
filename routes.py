@@ -786,6 +786,12 @@ DASHBOARD_HTML = """
         <div class="obs-section-title" style="margin-top:12px;">LAST TCP RESPONSE</div>
         <div class="dolphin5-last-msg" id="dolphin5-1-last-msg">&#8212;</div>
         <div style="font-size:10px;color:#555;margin-top:3px;" id="dolphin5-1-last-msg-age"></div>
+
+        <div class="obs-section-title" style="margin-top:12px;">EVENT LIST</div>
+        <div class="obs-row">
+          <button class="obs-btn" onclick="dolphin5LoadEvents(1)">Load Events 1-200</button>
+          <span id="dolphin5-1-load-label" style="font-size:11px;color:#888;margin-left:8px;">Not race-safe &mdash; confirm before sending</span>
+        </div>
       </div>
 
       <!-- Pool 2 panel -->
@@ -810,6 +816,12 @@ DASHBOARD_HTML = """
         <div class="obs-section-title" style="margin-top:12px;">LAST TCP RESPONSE</div>
         <div class="dolphin5-last-msg" id="dolphin5-2-last-msg">&#8212;</div>
         <div style="font-size:10px;color:#555;margin-top:3px;" id="dolphin5-2-last-msg-age"></div>
+
+        <div class="obs-section-title" style="margin-top:12px;">EVENT LIST</div>
+        <div class="obs-row">
+          <button class="obs-btn" onclick="dolphin5LoadEvents(2)">Load Events 1-200</button>
+          <span id="dolphin5-2-load-label" style="font-size:11px;color:#888;margin-left:8px;">Not race-safe &mdash; confirm before sending</span>
+        </div>
       </div>
 
   </div>
@@ -2150,6 +2162,18 @@ function dolphin5SaveConfig(num) {
   });
 }
 
+function dolphin5LoadEvents(num) {
+  if (!confirm('Pool ' + num + ': CLEAR all Dolphin5 events and load events 1-200 (1 heat each)?\\n\\n' +
+               'Only do this when NO race is running or displayed in the Dolphin5 Live view ' +
+               '-- Dolphin5 can crash otherwise.')) return;
+  const label = document.getElementById('dolphin5-' + num + '-load-label');
+  label.textContent = 'Loading...';
+  fetch('/api/dolphin5/pool' + num + '/load_events', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { label.textContent = d.message; label.style.color = d.ok ? '#4caf50' : '#f44336'; })
+    .catch(e => { label.textContent = 'Request failed: ' + e; label.style.color = '#f44336'; });
+}
+
 function dolphin5Start() {
   fetch('/api/dolphin5/start', { method: 'POST' }).then(() => loadDolphin5Status());
 }
@@ -2552,6 +2576,11 @@ def api_companion_set_heat_p1():
     heat  = request.args.get("heat")
     if event is None or heat is None:
         return jsonify({"error": "Missing event or heat parameter"}), 400
+    if event == "$NA" or heat == "$NA":
+        # Bitfocus Companion's own "variable unresolved" sentinel — not a real
+        # heat, so ignore it rather than letting it reach Dolphin5 chase.
+        log.info(f"Companion P1 heat set ignored (unresolved $NA): Event={event} Heat={heat}")
+        return jsonify({"status": "ignored", "reason": "unresolved $NA"}), 200
     companion_state.set_heat(1, event, heat)
     log.info(f"Companion P1 heat set: Event={event} Heat={heat}")
     return jsonify({"status": "ok", "pool": 1, "event_id": event, "heat": heat})
@@ -2995,3 +3024,13 @@ def api_dolphin5_start():
     """Start Dolphin5 TCP control for this running session. Idempotent."""
     dolphin5_control.start()
     return jsonify({"running": dolphin5_control.is_running()})
+
+
+@app.route("/api/dolphin5/pool<int:pool_num>/load_events", methods=["POST"])
+def api_dolphin5_load_events(pool_num):
+    """Manual button only: clearEvents + setEventInfo 1-200 on one pool."""
+    import dolphin5_events
+    if pool_num not in (1, 2):
+        return jsonify({"ok": False, "message": "Unknown pool"}), 400
+    ok, message = dolphin5_events.load_events(pool_num)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 409)

@@ -19,7 +19,9 @@ this file — there is simply no code path that could send one, a stronger
 guarantee than a runtime check would be (the latter two have a known
 Dolphin5 crash bug when sent during an active race; reset pops a
 human-confirmation dialog that blocks all TCP processing, which is why
-Companion owns it exclusively).
+Companion owns it exclusively). The one deliberate exception is
+dolphin5_events.py's manual, dashboard-button-only event-list load, kept in
+its own module so this file's guarantee still holds for the chase loop.
 
 This module is purely about sending — it is NOT imported by ingestion.py.
 The exact-match tier there sources race identity only from each XML file's
@@ -356,6 +358,13 @@ def start():
         threading.Thread(target=_connection_supervisor, args=(pool_num,), daemon=True).start()
     threading.Thread(target=_chase_loop, daemon=True).start()
     log.info("Dolphin5 control started (chase-GEN7 TCP control)")
+
+
+def get_connection(pool_num):
+    """The pool's live connection, or None. Only for dolphin5_events.py's
+    manual, button-triggered event load -- see that module."""
+    with _connections_lock:
+        return _connections.get(pool_num)
 
 
 def get_connection_status(pool_num):
