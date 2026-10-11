@@ -164,6 +164,12 @@ SNAPSHOT_KEEP_COUNT = 0   # 0 = keep all snapshots, never auto-delete
 # Prevents reading a file that is still being written.
 WATCHDOG_DEBOUNCE_SECONDS = 2.0
 
+# Watcher health check (watchdog_monitor._start_health_check): how often to
+# re-list WATCH_DIR for result files the watcher never picked up, and how old
+# a file must be before it counts as missed (well past the debounce).
+WATCH_HEALTH_INTERVAL_SECONDS = 60
+WATCH_HEALTH_GRACE_SECONDS = 30
+
 # ---------------------------------------------------------------------------
 # FLASK SERVER SETTINGS
 # ---------------------------------------------------------------------------

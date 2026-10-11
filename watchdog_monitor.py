@@ -29,6 +29,7 @@ class IngestHandler(FileSystemEventHandler):
 
     def __init__(self):
         self._pending = {}   # filepath -> scheduled fire time
+        self._seen = set()   # normalized paths already handed to _process (health check)
         self._lock = threading.Lock()
         self._start_debounce_loop()
 
@@ -71,6 +72,8 @@ class IngestHandler(FileSystemEventHandler):
             self._pending[path] = time.time() + config.WATCHDOG_DEBOUNCE_SECONDS
 
     def _process(self, filepath):
+        with self._lock:
+            self._seen.add(os.path.normcase(os.path.abspath(filepath)))
         if not os.path.exists(filepath):
             return
         ext = os.path.splitext(filepath)[1].lower()
@@ -222,4 +225,85 @@ def start_watchdog():
     if os.path.abspath(config.SCHEDULE_DIR) != os.path.abspath(config.WATCH_DIR):
         _watch_dir_with_retry(observer, handler, config.SCHEDULE_DIR, "SCHEDULE_DIR")
 
+    _start_health_check(observer, handler)
     return observer
+
+
+# Watcher health status, read by /api/watch_health.
+watch_health = {"ok": True, "last_check": None, "last_problem": None, "missed_total": 0}
+
+def _start_health_check(observer, handler):
+    """
+    Safety net for the watcher silently going deaf. Seen live 2026-10-11: the
+    observer stopped reporting WATCH_DIR files at 12:01 with nothing logged,
+    while .gen/.xml files kept landing for over an hour; only a server restart
+    revived it.
+
+    Every WATCH_HEALTH_INTERVAL_SECONDS this re-lists WATCH_DIR and looks for
+    result files (.gen/.xml/.do3) that arrived after the server started, are
+    older than WATCH_HEALTH_GRACE_SECONDS, and were never handed to _process.
+    Any found are logged at ERROR, ingested oldest-first (so a .gen still
+    lands before or near its Dolphin file, as it would live), and the
+    WATCH_DIR watch is re-armed. Only files newer than server start count,
+    so a restart never re-ingests the existing backlog.
+    """
+    exts = {e.lower() for e in (config.GEN_EXTENSION, config.DOLPHIN_EXTENSION,
+                                config.DOLPHIN5_XML_EXTENSION)}
+    started = time.time()
+
+    def loop():
+        while True:
+            time.sleep(config.WATCH_HEALTH_INTERVAL_SECONDS)
+            try:
+                _health_pass(observer, handler, exts, started)
+            except Exception as e:
+                log.warning(f"Watch health check failed: {e}")
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def _health_pass(observer, handler, exts, started):
+    from datetime import datetime
+    watch_health["last_check"] = datetime.now().isoformat(timespec="seconds")
+    if not os.path.isdir(config.WATCH_DIR):
+        watch_health["ok"] = False
+        watch_health["last_problem"] = f"{watch_health['last_check']}: WATCH_DIR not reachable"
+        log.error(f"Watch health: WATCH_DIR not reachable: {config.WATCH_DIR}")
+        return
+
+    cutoff = time.time() - config.WATCH_HEALTH_GRACE_SECONDS
+    with handler._lock:
+        seen = set(handler._seen) | {os.path.normcase(os.path.abspath(p)) for p in handler._pending}
+    missed = []
+    for root, _dirs, files in os.walk(config.WATCH_DIR):
+        for f in files:
+            if os.path.splitext(f)[1].lower() not in exts:
+                continue
+            path = os.path.join(root, f)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if started <= mtime <= cutoff and os.path.normcase(os.path.abspath(path)) not in seen:
+                missed.append((mtime, path))
+
+    if not missed:
+        watch_health["ok"] = True
+        return
+
+    names = ", ".join(os.path.basename(p) for _m, p in sorted(missed))
+    log.error(f"Watch health: watcher missed {len(missed)} file(s), ingesting now and re-arming: {names}")
+    watch_health["ok"] = False
+    watch_health["missed_total"] += len(missed)
+    watch_health["last_problem"] = f"{watch_health['last_check']}: missed {len(missed)} file(s): {names}"
+    for _mtime, path in sorted(missed):
+        handler._process(path)
+
+    try:
+        observer.unschedule_all()
+        observer.schedule(handler, config.WATCH_DIR, recursive=True)
+        if os.path.abspath(config.SCHEDULE_DIR) != os.path.abspath(config.WATCH_DIR):
+            observer.schedule(handler, config.SCHEDULE_DIR)
+        log.warning("Watch health: WATCH_DIR watch re-armed")
+    except Exception as e:
+        log.error(f"Watch health: re-arm failed ({e}) -- restart the server")

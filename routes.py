@@ -2609,6 +2609,12 @@ def api_ingestion_log():
     return jsonify(get_ingestion_log(limit))
 
 
+@app.route("/api/watch_health")
+def api_watch_health():
+    from watchdog_monitor import watch_health
+    return jsonify(watch_health)
+
+
 @app.route("/api/snapshot", methods=["POST"])
 def api_snapshot():
     path = snapshot_db("manual")
