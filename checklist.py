@@ -169,6 +169,8 @@ def _check_timing_clients(params, context):
         version = c.get("client_version")
         if latest and version != latest:
             problems.append(f"client {version or 'pre-2.0'}, latest is {latest}")
+        if c.get("install_ok") is False:
+            problems.append(f"running from {c.get('install_dir')}, not C:\\CTSClient")
         folder = c.get("share_folder")
         if folder:
             line += f" -> {folder}"

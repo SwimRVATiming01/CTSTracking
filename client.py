@@ -12,8 +12,8 @@ sends heartbeats and keeps its share subfolder in place.
 Setup:
   No configuration required -- the share subfolder is named automatically
   from this machine's 172.16.0.x address and computer name, and created at
-  startup. Deploy the .exe locally (C:\CTSClient), not from Google Drive --
-  the log is written next to it. Run:  python client.py
+  startup. Deploy the .exe to C:\CTSClient on each machine, not Google
+  Drive -- it warns at startup otherwise. Run:  python client.py
 
 Requirements:
     pip install watchdog
@@ -50,7 +50,12 @@ except ImportError:
 
 # Bump on every rebuild of dist/CTS_Client.exe. CTSTracking reads this line
 # from its own copy of client.py and flags machines reporting anything else.
-CLIENT_VERSION = "2.0.0"
+CLIENT_VERSION = "2.0.1"
+
+# Where the .exe must be deployed on every machine. Running it from Google
+# Drive (or anything synced) breaks updates -- the running .exe is locked --
+# and puts every machine's log in one shared file.
+EXPECTED_INSTALL_DIR = r"C:\CTSClient"
 
 # Machine ID pulled from Windows computer name
 MACHINE_ID = platform.node().replace(" ", "_") or "UNKNOWN"
@@ -96,11 +101,11 @@ DOLPHIN_FOLDER_RECHECK = 30   # seconds
 # LOGGING
 # ===========================================================================
 
-# Next to the .exe when packaged (PyInstaller unpacks __file__ to a temp dir).
-LOG_PATH = os.path.join(
-    os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)),
-    "client.log",
-)
+# The .exe's own folder when packaged (PyInstaller unpacks __file__ to a temp dir).
+INSTALL_DIR = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
+INSTALL_OK = os.path.normcase(os.path.normpath(INSTALL_DIR)) == os.path.normcase(EXPECTED_INSTALL_DIR)
+
+LOG_PATH = os.path.join(INSTALL_DIR, "client.log")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -346,6 +351,8 @@ def _gather_status():
     return {
         "machine_id":       MACHINE_ID,
         "client_version":   CLIENT_VERSION,
+        "install_dir":      INSTALL_DIR,
+        "install_ok":       INSTALL_OK,
         "share_folder":     SHARE_SUBFOLDER,
         "ahk_scripts":      ahk_scripts,
         "vicreo_running":   vicreo_running,
@@ -564,6 +571,17 @@ if __name__ == "__main__":
     log.info("=" * 50)
     log.info(f"CTS Tracker Client {CLIENT_VERSION} starting")
     log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
+    log.info(f"  Running from: {INSTALL_DIR}")
+    # Only the packaged .exe is checked -- `python client.py` from the repo is a dev run.
+    if getattr(sys, "frozen", False) and not INSTALL_OK:
+        log.warning(f"Running from {INSTALL_DIR}, expected {EXPECTED_INSTALL_DIR}")
+        warn_popup(
+            f"CTS Tracker Client is running from:\n\n  {INSTALL_DIR}\n\n"
+            f"It should be installed at {EXPECTED_INSTALL_DIR} on this machine "
+            f"(not run from Google Drive or another synced folder).\n\n"
+            f"It will keep working, but please copy CTS_Client.exe to "
+            f"{EXPECTED_INSTALL_DIR} and run it from there."
+        )
     log.info(f"  Dolphin folder: {DOLPHIN_WATCH_FOLDER}")
     log.info(f"  Forwarding:  {os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER)}")
     if SHARE_SUBFOLDER.startswith("ipunknown_"):
