@@ -1,4 +1,4 @@
-"""
+r"""
 client.py - CTS Tracker Client
 ================================
 Runs on any Dolphin timing machine (Dolphin4 or Dolphin5).
@@ -6,10 +6,14 @@ Watches the local Dolphin output folder and copies race files to this
 machine's own subfolder on the server's network watch folder. Originals stay
 put -- Meet Manager ingests them locally.
 
+Also runs on GEN7 machines, where there is no C:\CTSDolphin: there it only
+sends heartbeats and keeps its share subfolder in place.
+
 Setup:
   No configuration required -- the share subfolder is named automatically
-  from this machine's 172.16.0.x address and computer name, and created on
-  first use. Run:  python client.py
+  from this machine's 172.16.0.x address and computer name, and created at
+  startup. Deploy the .exe locally (C:\CTSClient), not from Google Drive --
+  the log is written next to it. Run:  python client.py
 
 Requirements:
     pip install watchdog
@@ -17,6 +21,7 @@ Requirements:
 
 import ctypes
 import logging
+import logging.handlers
 import os
 import platform
 import shutil
@@ -42,6 +47,10 @@ except ImportError:
 # ===========================================================================
 # CONFIGURATION
 # ===========================================================================
+
+# Bump on every rebuild of dist/CTS_Client.exe. CTSTracking reads this line
+# from its own copy of client.py and flags machines reporting anything else.
+CLIENT_VERSION = "2.0.0"
 
 # Machine ID pulled from Windows computer name
 MACHINE_ID = platform.node().replace(" ", "_") or "UNKNOWN"
@@ -75,20 +84,31 @@ DISCOVERY_PORT     = 47200
 HEARTBEAT_INTERVAL = 30   # seconds between heartbeats
 DISCOVERY_TIMEOUT  = 3    # seconds to wait for server discovery response
 
+# Share upkeep: re-create the share subfolder if it vanishes, and copy
+# client.log into it so every machine's log can be read from one place.
+SHARE_UPKEEP_INTERVAL = 30    # seconds
+LOG_MIRROR_INTERVAL   = 300   # seconds
+
+# How often to look again for C:\CTSDolphin when it isn't there (normal on GEN7)
+DOLPHIN_FOLDER_RECHECK = 30   # seconds
+
 # ===========================================================================
 # LOGGING
 # ===========================================================================
+
+# Next to the .exe when packaged (PyInstaller unpacks __file__ to a temp dir).
+LOG_PATH = os.path.join(
+    os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)),
+    "client.log",
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        # Next to the .exe when packaged (PyInstaller unpacks __file__ to a temp dir).
-        logging.FileHandler(os.path.join(
-            os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)),
-            "client.log",
-        )),
+        # Capped so the copy mirrored to the share stays small.
+        logging.handlers.RotatingFileHandler(LOG_PATH, maxBytes=1_000_000, backupCount=3),
     ],
 )
 log = logging.getLogger("client")
@@ -324,11 +344,14 @@ def _gather_status():
         share_ok = False
 
     return {
-        "machine_id":     MACHINE_ID,
-        "ahk_scripts":    ahk_scripts,
-        "vicreo_running": vicreo_running,
-        "share_ok":       share_ok,
-        "dolphin_ok":     dolphin_ok,
+        "machine_id":       MACHINE_ID,
+        "client_version":   CLIENT_VERSION,
+        "share_folder":     SHARE_SUBFOLDER,
+        "ahk_scripts":      ahk_scripts,
+        "vicreo_running":   vicreo_running,
+        "share_ok":         share_ok,
+        "dolphin_ok":       dolphin_ok,
+        "dolphin5_running": dolphin5_running(),
     }
 
 
@@ -364,6 +387,48 @@ def _heartbeat_loop():
             server = None
 
         time.sleep(HEARTBEAT_INTERVAL)
+
+
+# ===========================================================================
+# SHARE UPKEEP
+# ===========================================================================
+
+def ensure_share_subfolder():
+    """Create this machine's share subfolder if missing. Returns True if it
+    exists afterwards. Never raises -- an unreachable share is just logged."""
+    dest_folder = os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER)
+    try:
+        if os.path.isdir(dest_folder):
+            return True
+        if not os.path.isdir(SERVER_WATCH_FOLDER):
+            return False
+        os.makedirs(dest_folder, exist_ok=True)
+        log.info(f"Created share folder: {dest_folder}")
+        return True
+    except OSError as e:
+        log.warning(f"Could not create share folder {dest_folder}: {e}")
+        return False
+
+
+def mirror_log_to_share():
+    """Copy client.log into this machine's share subfolder."""
+    try:
+        if os.path.isfile(LOG_PATH) and ensure_share_subfolder():
+            shutil.copyfile(LOG_PATH, os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER, "client.log"))
+    except OSError as e:
+        log.debug(f"Log mirror failed: {e}")
+
+
+def _share_upkeep_loop():
+    """Background thread: keep the share subfolder in place, and mirror the
+    log every LOG_MIRROR_INTERVAL seconds."""
+    last_mirror = 0
+    while True:
+        ensure_share_subfolder()
+        if time.time() - last_mirror >= LOG_MIRROR_INTERVAL:
+            mirror_log_to_share()
+            last_mirror = time.time()
+        time.sleep(SHARE_UPKEEP_INTERVAL)
 
 
 # ===========================================================================
@@ -452,32 +517,27 @@ class ForwardHandler(FileSystemEventHandler):
 # FOLDER WATCHING WITH RETRY
 # ===========================================================================
 
-def _watch_folder_with_retry(observer, handler, path, label, retry_interval=10, max_attempts=3):
+def _watch_folder_when_present(observer, handler, path, label):
     """
-    Try to add a folder to the watchdog observer.
-    If the folder doesn't exist, retries up to max_attempts times then gives up.
+    Add a folder to the watchdog observer once it exists. A missing folder is
+    normal (GEN7 machines have no C:\\CTSDolphin), so this never pops up and
+    never creates the folder -- it logs once and keeps checking quietly.
     """
     def attempt():
-        for attempt_num in range(1, max_attempts + 1):
+        logged_missing = False
+        while True:
             if os.path.isdir(path):
                 try:
                     observer.schedule(handler, path, recursive=False)
                     log.info(f"Watching {label}: {path}")
                     return
                 except Exception as e:
-                    log.warning(f"Could not watch {label}: {e} — retrying in {retry_interval}s")
-            else:
-                log.warning(f"{label} not found: {path} — attempt {attempt_num}/{max_attempts}")
-            if attempt_num < max_attempts:
-                time.sleep(retry_interval)
-
-        log.error(f"Giving up on {label}: {path} — folder not found after {max_attempts} attempts")
-        warn_popup(
-            f"Could not find the {label} folder after {max_attempts} attempts:\n\n"
-            f"  {path}\n\n"
-            f"This folder will NOT be watched this session.\n"
-            f"Restart the client once the folder is available."
-        )
+                    log.warning(f"Could not watch {label}: {e} — retrying in {DOLPHIN_FOLDER_RECHECK}s")
+            elif not logged_missing:
+                log.info(f"{label} folder not present: {path} — no files to forward "
+                         f"(normal on a GEN7 machine); will start watching if it appears")
+                logged_missing = True
+            time.sleep(DOLPHIN_FOLDER_RECHECK)
 
     threading.Thread(target=attempt, daemon=True).start()
 
@@ -502,7 +562,7 @@ if __name__ == "__main__":
     SHARE_SUBFOLDER = get_share_subfolder_name()
 
     log.info("=" * 50)
-    log.info("CTS Tracker Client starting")
+    log.info(f"CTS Tracker Client {CLIENT_VERSION} starting")
     log.info(f"  Machine ID:  {MACHINE_ID}  (from computer name)")
     log.info(f"  Dolphin folder: {DOLPHIN_WATCH_FOLDER}")
     log.info(f"  Forwarding:  {os.path.join(SERVER_WATCH_FOLDER, SHARE_SUBFOLDER)}")
@@ -524,15 +584,18 @@ if __name__ == "__main__":
         )
         log.warning(f"Server watch folder not accessible: {SERVER_WATCH_FOLDER}")
         warn_popup(msg)
+    else:
+        ensure_share_subfolder()
 
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
+    threading.Thread(target=_share_upkeep_loop, daemon=True).start()
 
     handler = ForwardHandler()
     observer = Observer()
     observer.daemon = True
     observer.start()
 
-    _watch_folder_with_retry(observer, handler, DOLPHIN_WATCH_FOLDER, "Dolphin")
+    _watch_folder_when_present(observer, handler, DOLPHIN_WATCH_FOLDER, "Dolphin")
 
     log.info("Watching for files... (Ctrl+C to stop)")
 

@@ -18,6 +18,7 @@ import re
 from datetime import datetime
 
 import companion_peers
+import config
 import database
 import dolphin5_control
 
@@ -115,10 +116,33 @@ def _secs_ago(s):
     return f"{round(s / 3600)} h ago"
 
 
+def _latest_client_version():
+    """CLIENT_VERSION from this repo's own client.py -- the build that should be
+    deployed. Read as text: importing client.py would start its logging."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.py"),
+                  encoding="utf-8") as f:
+            m = re.search(r'^CLIENT_VERSION\s*=\s*"([^"]+)"', f.read(), re.M)
+        return m.group(1) if m else None
+    except OSError:
+        return None
+
+
+def _share_machine_folders():
+    """Names of the ip<octet>_<machine> subfolders in WATCH_DIR, or None if
+    the share can't be listed."""
+    try:
+        return sorted(e.name for e in os.scandir(config.WATCH_DIR)
+                      if e.is_dir() and e.name.startswith("ip"))
+    except OSError:
+        return None
+
+
 def _check_timing_clients(params, context):
     clients = context.get("clients", [])
     if not clients:
         return False, "No clients reporting in"
+    latest = _latest_client_version()
     lines = []
     any_online = False
     dolphin5_problem = False
@@ -136,13 +160,31 @@ def _check_timing_clients(params, context):
                 line += " (Dolphin5 open)"
         if c.get("share_ok") is False:
             problems.append("share unreachable")
-        if c.get("dolphin_ok") is False:
+        # No C:\CTSDolphin is normal on a GEN7 machine -- only a problem
+        # where Dolphin5 is open and has nowhere to save.
+        if c.get("dolphin_ok") is False and c.get("dolphin5_running"):
             problems.append("no Dolphin folder")
         if c.get("vicreo_running") is False:
             problems.append("Vicreo not running")
+        version = c.get("client_version")
+        if latest and version != latest:
+            problems.append(f"client {version or 'pre-2.0'}, latest is {latest}")
+        folder = c.get("share_folder")
+        if folder:
+            line += f" -> {folder}"
+            if folder.startswith("ipunknown_"):
+                problems.append("no timing-network IP")
         if problems:
             line += f" ({', '.join(problems)})"
         lines.append(_line(c["online"] and not problems, line))
+
+    # Share folders no online client claims: a renamed machine, a changed IP,
+    # or a machine whose client isn't running.
+    folders = _share_machine_folders()
+    claimed = {c.get("share_folder") for c in clients if c["online"]}
+    for name in folders or []:
+        if name not in claimed:
+            lines.append(_line(None, f"Share folder {name}: no client reporting it"))
     return any_online and not dolphin5_problem, "\n".join(lines)
 
 

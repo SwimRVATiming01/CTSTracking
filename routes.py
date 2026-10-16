@@ -2981,6 +2981,8 @@ def api_heartbeat():
             "dolphin_ok":     data.get("dolphin_ok"),
             "cts_ok":         data.get("cts_ok"),
             "dolphin5_running": data.get("dolphin5_running"),
+            "client_version": data.get("client_version"),
+            "share_folder":   data.get("share_folder"),
         }
     return jsonify({"ok": True})
 
@@ -3006,6 +3008,8 @@ def _client_rows():
                 "dolphin_ok":     c["dolphin_ok"],
                 "cts_ok":         c["cts_ok"],
                 "dolphin5_running": c["dolphin5_running"],
+                "client_version": c.get("client_version"),
+                "share_folder":   c.get("share_folder"),
             }
             for c in _clients.values()
         ]
