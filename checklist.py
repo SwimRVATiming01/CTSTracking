@@ -164,8 +164,6 @@ def _check_timing_clients(params, context):
         # where Dolphin5 is open and has nowhere to save.
         if c.get("dolphin_ok") is False and c.get("dolphin5_running"):
             problems.append("no Dolphin folder")
-        if c.get("vicreo_running") is False:
-            problems.append("Vicreo not running")
         version = c.get("client_version")
         if latest and version != latest:
             problems.append(f"client {version or 'pre-2.0'}, latest is {latest}")
@@ -176,9 +174,20 @@ def _check_timing_clients(params, context):
             line += f" -> {folder}"
             if folder.startswith("ipunknown_"):
                 problems.append("no timing-network IP")
+        # Informational only -- no expected list, so nothing here fails the item.
+        # Every client should have Vicreo and at least one AHK script: green
+        # when present, grey placeholder line when not.
+        scripts = list(dict.fromkeys(c.get("ahk_scripts") or []))
         if problems:
             line += f" ({', '.join(problems)})"
         lines.append(_line(c["online"] and not problems, line))
+        # "  - " lines render as sub-bullets under the line above.
+        lines.append("  - " + (_line(True, "Vicreo") if c.get("vicreo_running")
+                               else _line(None, "Vicreo not running")))
+        if scripts:
+            lines.extend("  - " + _line(True, s) for s in scripts)
+        else:
+            lines.append("  - " + _line(None, "No AHK script running"))
 
     # Share folders no online client claims: a renamed machine, a changed IP,
     # or a machine whose client isn't running.

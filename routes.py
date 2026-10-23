@@ -283,6 +283,7 @@ DASHBOARD_HTML = """
     .cl-dot.fail    { background:#ff6b6b; }
     .cl-dot.unknown { background:#444; }
     .checklist-detail-list { margin:0; padding-left:16px; list-style:disc; }
+    .checklist-detail-sublist { margin:0; padding-left:18px; list-style:circle; color:#aaa; }
     .checklist-notes { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; max-width:640px; }
     .checklist-notes-title { font-size:13px; font-weight:bold; color:#6bffb0; margin-bottom:6px; }
     .checklist-note-input { width:100%; min-height:60px; background:#0f3460; border:1px solid #1e2a4a;
@@ -1877,8 +1878,20 @@ function loadChecklist() {
             const m = l.match(/^\\[(ok|fail|unknown)\\] (.*)$/);
             return m ? '<span class="cl-dot ' + m[1] + '"></span>' + escapeHtml(m[2]) : escapeHtml(l);
           };
+          // Lines starting "  - " nest as sub-bullets under the previous line.
+          let listHtml = '';
+          lines.forEach((l, i) => {
+            const sub = l.startsWith('  - ');
+            const prevSub = i > 0 && lines[i - 1].startsWith('  - ');
+            if (sub && !prevSub) listHtml += '<ul class="checklist-detail-sublist">';
+            if (!sub && prevSub) listHtml += '</ul></li>';
+            else if (!sub && i > 0) listHtml += '</li>';
+            listHtml += sub ? '<li>' + renderLine(l.slice(4)) + '</li>' : '<li>' + renderLine(l);
+          });
+          if (lines.length && lines[lines.length - 1].startsWith('  - ')) listHtml += '</ul>';
+          listHtml += '</li>';
           const body = lines.length > 1
-            ? '<ul class="checklist-detail-list">' + lines.map(l => '<li>' + renderLine(l) + '</li>').join('') + '</ul>'
+            ? '<ul class="checklist-detail-list">' + listHtml + '</ul>'
             : renderLine(label);
           // Multi-entry rows already show a dot per line, so skip the overall one.
           const hasLineDots = lines.length > 1 || /^\\[(ok|fail|unknown)\\] /.test(label);
