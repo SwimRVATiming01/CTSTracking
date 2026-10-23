@@ -278,12 +278,13 @@ DASHBOARD_HTML = """
     .checklist-item-note div { margin-top:2px; }
     .checklist-note-list { margin:2px 0 0 0; padding-left:16px; list-style:disc; }
     .checklist-status { display:flex; align-items:center; gap:6px; font-size:11px; }
-    .cl-dot { display:inline-block; width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+    .cl-dot { display:inline-block; width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-right:7px; }
     .cl-dot.ok      { background:#6bff6b; }
     .cl-dot.fail    { background:#ff6b6b; }
     .cl-dot.unknown { background:#444; }
     .checklist-detail-list { margin:0; padding-left:16px; list-style:disc; }
     .checklist-detail-sublist { margin:0; padding-left:18px; list-style:circle; color:#aaa; }
+    .checklist-detail-list li.has-dot { list-style:none; }
     .checklist-notes { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; max-width:640px; }
     .checklist-notes-title { font-size:13px; font-weight:bold; color:#6bffb0; margin-bottom:6px; }
     .checklist-note-input { width:100%; min-height:60px; background:#0f3460; border:1px solid #1e2a4a;
@@ -1878,6 +1879,8 @@ function loadChecklist() {
             const m = l.match(/^\\[(ok|fail|unknown)\\] (.*)$/);
             return m ? '<span class="cl-dot ' + m[1] + '"></span>' + escapeHtml(m[2]) : escapeHtml(l);
           };
+          // Dotted lines drop the list bullet -- the dot is the marker.
+          const liOpen = l => /^\\[(ok|fail|unknown)\\] /.test(l) ? '<li class="has-dot">' : '<li>';
           // Lines starting "  - " nest as sub-bullets under the previous line.
           let listHtml = '';
           lines.forEach((l, i) => {
@@ -1886,7 +1889,7 @@ function loadChecklist() {
             if (sub && !prevSub) listHtml += '<ul class="checklist-detail-sublist">';
             if (!sub && prevSub) listHtml += '</ul></li>';
             else if (!sub && i > 0) listHtml += '</li>';
-            listHtml += sub ? '<li>' + renderLine(l.slice(4)) + '</li>' : '<li>' + renderLine(l);
+            listHtml += sub ? liOpen(l.slice(4)) + renderLine(l.slice(4)) + '</li>' : liOpen(l) + renderLine(l);
           });
           if (lines.length && lines[lines.length - 1].startsWith('  - ')) listHtml += '</ul>';
           listHtml += '</li>';
