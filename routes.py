@@ -2814,6 +2814,22 @@ def api_companion_me():
     return jsonify(dict(state, pool=pool_num))
 
 
+@app.route("/api/companion/me/<field>")
+def api_companion_me_field(field):
+    """One field of /api/companion/me as a bare JSON value (e.g. "NEXT HEAT"),
+    for Companion versions with no JSONPath action: the Generic HTTP GET's
+    response variable then holds the value itself."""
+    pool_num = companion_peers.pool_for_ip(request.remote_addr)
+    if pool_num is None:
+        return jsonify("NO POOL")
+    meet = get_active_meet()
+    if not meet:
+        return jsonify("")
+    state = get_current_heat_state(meet["meet_id"]).get(f"pool{pool_num}", {})
+    value = state.get(field)
+    return jsonify("" if value is None else value)
+
+
 @app.route("/api/companion/pool1")
 def api_companion_pool1():
     meet = get_active_meet()
