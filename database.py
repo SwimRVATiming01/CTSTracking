@@ -224,6 +224,22 @@ CREATE TABLE IF NOT EXISTS companion_config (
     port        INTEGER,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Every LaneIOString post from a pool Companion's RESET action, kept as-is
+-- (nothing dismissed). Matched to a .gen by pool + time at display time;
+-- stamped_event/heat is the pool's current heat when the post arrived, kept
+-- as a cross-check on that time match.
+CREATE TABLE IF NOT EXISTS lane_posts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    meet_id         TEXT,
+    received_at     TEXT NOT NULL,      -- local time, same clock as .gen receipt
+    source_ip       TEXT,
+    pool_num        INTEGER,            -- NULL = IP not assigned in Peripherals
+    lane_io_string  TEXT,
+    lanes_off       TEXT,               -- e.g. "3,7" (odd press count)
+    stamped_event   TEXT,
+    stamped_heat    TEXT
+);
 """
 
 
@@ -1453,3 +1469,26 @@ def _snapshot_scheduler():
     while True:
         time.sleep(interval)
         snapshot_db("scheduled")
+
+
+# ===========================================================================
+# LANE POSTS (Companion LaneIOString)
+# ===========================================================================
+
+def lanes_off_from_string(lane_io_string):
+    """Each GEN7 lane key press appends its digit; an odd count = lane OFF."""
+    digits = [c for c in (lane_io_string or "") if c in "12345678"]
+    return [n for n in range(1, 9) if digits.count(str(n)) % 2 == 1]
+
+
+def add_lane_post(meet_id, received_at, source_ip, pool_num, lane_io_string,
+                  stamped_event, stamped_heat):
+    lanes_off = ",".join(str(n) for n in lanes_off_from_string(lane_io_string))
+    with get_write_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO lane_posts (meet_id, received_at, source_ip, pool_num,
+               lane_io_string, lanes_off, stamped_event, stamped_heat)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (meet_id, received_at, source_ip, pool_num, lane_io_string, lanes_off,
+             stamped_event, stamped_heat))
+        return cur.lastrowid, lanes_off

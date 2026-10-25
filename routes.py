@@ -24,7 +24,7 @@ from database import (
     get_schedule, get_sessions, override_start_time, clear_override,
     reorder_heats, add_manual_heat,
     get_race_dashboard, get_full_log, get_current_heat_state, resolve_heat_row,
-    get_harvested_times,
+    get_harvested_times, add_lane_post,
     add_manual_race_entry, update_race_entry,
     get_pending_summary, get_ingestion_log,
     export_race_log_csv, snapshot_db, get_snapshots,
@@ -2828,6 +2828,30 @@ def api_companion_me_field(field):
     state = get_current_heat_state(meet["meet_id"]).get(f"pool{pool_num}", {})
     value = state.get(field)
     return jsonify("" if value is None else value)
+
+
+@app.route("/api/companion/lanes", methods=["GET", "POST"])
+def api_companion_lanes():
+    """LaneIOString from a pool Companion's RESET action:
+    /api/companion/lanes?s=$(custom:LaneIOString). Pool comes from the
+    caller's IP (Peripherals). Stored every time, never rejected -- an
+    unassigned IP is kept with pool NULL."""
+    lane_str = request.values.get("s", "")
+    if lane_str == "$NA":
+        lane_str = ""
+    ip = request.remote_addr
+    pool_num = companion_peers.pool_for_ip(ip)
+    meet = get_active_meet()
+    meet_id = meet["meet_id"] if meet else None
+    ev = ht = None
+    if meet and pool_num:
+        state = get_current_heat_state(meet_id).get(f"pool{pool_num}", {})
+        ev, ht = state.get("current_event"), state.get("current_heat")
+    received = datetime.now().isoformat(timespec="milliseconds")
+    post_id, lanes_off = add_lane_post(meet_id, received, ip, pool_num, lane_str, ev, ht)
+    log.info(f"Lane post #{post_id} from {ip} (pool {pool_num}): '{lane_str}' -> off [{lanes_off}] stamped {ev}-{ht}")
+    return jsonify({"ok": True, "id": post_id, "pool": pool_num, "lanes_off": lanes_off,
+                    "stamped_event": ev, "stamped_heat": ht})
 
 
 @app.route("/api/companion/pool1")
