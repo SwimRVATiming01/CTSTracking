@@ -279,6 +279,8 @@ def _health_pass(observer, handler, exts, started):
         for f in files:
             if os.path.splitext(f)[1].lower() not in exts:
                 continue
+            if f.lower() == "dolphin_settings.xml":  # Dolphin5 config, not a result -- never ingested
+                continue
             path = os.path.join(root, f)
             try:
                 mtime = os.path.getmtime(path)

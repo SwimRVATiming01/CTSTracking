@@ -620,6 +620,7 @@ DASHBOARD_HTML = """
       <button class="sched-toggle-btn" id="btn-toggle-session" onclick="toggleSessionGrouping()">Session Grouping: ON</button>
       <button class="sched-toggle-btn" id="btn-toggle-sort" onclick="toggleSortMode()">Sort: Wall Time</button>
       <button class="sched-toggle-btn" id="btn-toggle-time-source" onclick="toggleTimeSource()">Projected Time: Meet Program</button>
+      <button class="sched-toggle-btn" id="btn-toggle-follow" onclick="toggleFollowPool()">Auto-Scroll: Off</button>
     </div>
   </div>
   <div class="settings-section">
@@ -895,6 +896,11 @@ let lastSession = null;
 let sessionGroupingOn = localStorage.getItem('sched_session_grouping') !== 'off';
 let sortMode = localStorage.getItem('sched_sort_mode') || 'walltime'; // 'walltime' | 'eventheat'
 let timeSource = localStorage.getItem('sched_time_source') || 'meetprogram'; // 'meetprogram' | 'sessionreport'
+// Auto-scroll is per screen (localStorage), never shared between users.
+let followPool = localStorage.getItem('sched_follow_pool') || 'off'; // 'off' | '1' | '2'
+let followLastKey = null;      // row we last centered; only scroll again when it changes
+let followPausedUntil = 0;     // set when the user scrolls by hand
+const FOLLOW_PAUSE_MS = 30000;
 let lastDashboardData = null;
 
 function sessionNum(session) {
@@ -927,7 +933,56 @@ function updateScheduleToggleButtons() {
   if (tBtn) {
     tBtn.textContent = 'Projected Time: ' + (timeSource === 'meetprogram' ? 'Meet Program' : 'Session Report');
   }
+  const fBtn = document.getElementById('btn-toggle-follow');
+  if (fBtn) {
+    fBtn.textContent = 'Auto-Scroll: ' + (followPool === 'off' ? 'Off' : 'Pool ' + followPool);
+    fBtn.classList.toggle('off', followPool === 'off');
+  }
 }
+
+function toggleFollowPool() {
+  followPool = followPool === 'off' ? '1' : followPool === '1' ? '2' : 'off';
+  localStorage.setItem('sched_follow_pool', followPool);
+  followLastKey = null;
+  followPausedUntil = 0;
+  updateScheduleToggleButtons();
+}
+
+// Centers the followed pool's current heat (or its next heat when no current
+// one is known). Scrolls only when that heat changes, not on every poll, and
+// backs off for FOLLOW_PAUSE_MS after the user scrolls by hand.
+function followActiveRow() {
+  if (followPool === 'off' || !lastDashboardData) return;
+  const view = document.getElementById('schedule-view');
+  if (!view || view.style.display === 'none') return;
+  if (Date.now() < followPausedUntil) return;
+  const rows = lastDashboardData.rows || [];
+  const row = rows.find(r => r['is_current_p' + followPool]) || rows.find(r => r['is_next_p' + followPool]);
+  if (!row) return;
+  const key = rowKey(row);
+  if (key === followLastKey) return;
+  const tr = view.querySelector('tr[data-key="' + CSS.escape(key) + '"]');
+  if (!tr) return;
+  tr.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  followLastKey = key;
+}
+
+function rowKey(row) {
+  return row.session + '|' + row.event_id + '|' + row.heat;
+}
+
+// User-intent events only (not 'scroll', which our own smooth scroll fires too).
+document.addEventListener('DOMContentLoaded', () => {
+  const view = document.getElementById('schedule-view');
+  if (!view) return;
+  ['wheel', 'touchstart', 'mousedown', 'keydown'].forEach(ev =>
+    view.addEventListener(ev, () => {
+      if (followPool === 'off') return;
+      followPausedUntil = Date.now() + FOLLOW_PAUSE_MS;
+      followLastKey = null;   // re-center once the pause ends
+    }, { passive: true }));
+});
+setInterval(followActiveRow, 5000);  // resumes after a pause, and catches switching back to the Schedule tab
 
 function toggleSessionGrouping() {
   sessionGroupingOn = !sessionGroupingOn;
@@ -1267,6 +1322,7 @@ function renderScheduleRows() {
       }
       return html + renderRow(row);
     }).join('');
+  followActiveRow();
 }
 
 // Returns "3 · A" when heat_label ends with a final letter, otherwise just heat number.
@@ -1360,7 +1416,7 @@ function renderRow(row) {
     finish = t.length >= 19 ? t.substring(11, 19) : t;
   }
 
-  return '<tr class="' + cls + '">' +
+  return '<tr class="' + cls + '" data-key="' + rowKey(row).replace(/"/g, '&quot;') + '">' +
     evCell +
     '<td>' + heatDisplay(row.heat, row.heat_label) + '</td>' +
     '<td>' + (projectedTimeFor(row) || '\u2014') + '</td>' +
