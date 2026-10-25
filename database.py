@@ -942,6 +942,20 @@ def resolve_heat_row(event_id, heat, rows):
     return None
 
 
+def _next_action(current_row, next_row):
+    """What the pool's finish-race button should do, for Companion:
+    "NEXT HEAT" when the next schedule line is the same event, otherwise
+    "NEXT EVENT". An off-schedule current race (e.g. 999 Streamline) counts
+    as NEXT EVENT; nothing after it in the schedule defaults to NEXT HEAT."""
+    if current_row is None:
+        return "NEXT EVENT"
+    if next_row is None:
+        return "NEXT HEAT"
+    if str(next_row["event_id"]) == str(current_row["event_id"]):
+        return "NEXT HEAT"
+    return "NEXT EVENT"
+
+
 def get_current_heat_state(meet_id):
     """
     Return current heat and next-heat state for each pool. Used by
@@ -976,15 +990,25 @@ def get_current_heat_state(meet_id):
                 (r["event_name"] for r in rows if str(r.get("event_id")) == str(event_id)),
                 None
             )
+            next_row = None
+            if match:
+                next_row = next(
+                    (r for r in sorted(rows, key=lambda x: x["heat_order"])
+                     if r["heat_order"] > match["heat_order"]),
+                    None
+                )
             result[f"pool{pool_num}"] = {
                 "active": True,
                 "current_event": event_id,
                 "current_heat": resolved_heat,
                 "current_event_name": event_name,
                 "cts_race_num": None,
-                "next_event": None,
-                "next_heat": None,
-                "next_is_new_event": None,
+                "next_event": next_row["event_id"] if next_row else None,
+                "next_heat": next_row["heat"] if next_row else None,
+                "next_is_new_event": (
+                    str(next_row["event_id"]) != str(event_id) if next_row else None
+                ),
+                "next_action": _next_action(match, next_row),
                 "source": "companion",
             }
             continue
@@ -1022,6 +1046,7 @@ def get_current_heat_state(meet_id):
                 next_row["event_id"] != current_row["event_id"]
                 if next_row else None
             ),
+            "next_action": _next_action(current_row, next_row),
             "source": "schedule",
         }
 

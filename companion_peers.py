@@ -47,6 +47,14 @@ def get_config(role):
     return {"host": saved.get("host"), "port": saved.get("port") or config.COMPANION_DEFAULT_PORT}
 
 
+def pool_for_ip(ip):
+    """Which pool (1/2) Peripherals currently assigns to this Companion IP, or None."""
+    for n in (1, 2):
+        if get_config(f"pool{n}").get("host") == ip:
+            return n
+    return None
+
+
 def update_config(pool_num, host=None, port=None):
     database.save_companion_config(pool_num, host, port)
     # Re-probe right away so the dashboard reflects the new host promptly.

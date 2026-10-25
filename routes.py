@@ -2799,6 +2799,21 @@ def api_companion_peers_config():
     return jsonify({"ok": True})
 
 
+@app.route("/api/companion/me")
+def api_companion_me():
+    """Same as /api/companion/poolN, with the pool picked from the caller's IP
+    via the Peripherals assignment -- so both pool Companions can share one
+    unchanging URL even when a machine swaps pools between meets."""
+    pool_num = companion_peers.pool_for_ip(request.remote_addr)
+    if pool_num is None:
+        return jsonify({"active": False, "error": f"{request.remote_addr} is not assigned to a pool in Peripherals"})
+    meet = get_active_meet()
+    if not meet:
+        return jsonify({"active": False, "pool": pool_num})
+    state = get_current_heat_state(meet["meet_id"]).get(f"pool{pool_num}", {"active": False})
+    return jsonify(dict(state, pool=pool_num))
+
+
 @app.route("/api/companion/pool1")
 def api_companion_pool1():
     meet = get_active_meet()
