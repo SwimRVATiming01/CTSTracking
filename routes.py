@@ -1393,7 +1393,7 @@ function renderRow(row) {
   }
 
   // Lane cells
-  const active = (hasRace && row.active_lanes)
+  const active = (hasRace && row.active_lanes != null)  // '' = race filed, no lane recorded -> all red
     ? row.active_lanes.split(',').map(Number)
     : null;
   const lanes = [1,2,3,4,5,6,7,8].map(n => {
@@ -1656,7 +1656,7 @@ function loadHistoryDashboard(meetId) {
             const dc = rounded > 0 ? 'late' : rounded < 0 ? 'early' : 'ontime';
             delta = '<span class="' + dc + '">' + (rounded > 0 ? '+' : '') + rounded + '</span>';
           }
-          const active = (hasRace && row.active_lanes)
+          const active = (hasRace && row.active_lanes != null)  // '' = race filed, no lane recorded -> all red
             ? row.active_lanes.split(',').map(Number) : null;
           const lanes = [1,2,3,4,5,6,7,8].map(n => {
             if (active === null) return '<td class="lane-unknown">\u2014</td>';
