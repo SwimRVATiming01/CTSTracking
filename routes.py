@@ -831,7 +831,8 @@ DASHBOARD_HTML = """
 
         <div class="obs-section-title" style="margin-top:12px;">EVENT LIST</div>
         <div class="obs-row">
-          <button class="obs-btn" onclick="dolphin5LoadEvents(1)">Load Events 1-200</button>
+          <button class="obs-btn" onclick="dolphin5LoadEvents(1)">Load Events 1-200 + 999</button>
+          <button class="obs-btn" onclick="dolphin5LoadProgram(1)">Load from Meet Program</button>
           <span id="dolphin5-1-load-label" style="font-size:11px;color:#888;margin-left:8px;">Not race-safe &mdash; confirm before sending</span>
         </div>
       </div>
@@ -861,7 +862,8 @@ DASHBOARD_HTML = """
 
         <div class="obs-section-title" style="margin-top:12px;">EVENT LIST</div>
         <div class="obs-row">
-          <button class="obs-btn" onclick="dolphin5LoadEvents(2)">Load Events 1-200</button>
+          <button class="obs-btn" onclick="dolphin5LoadEvents(2)">Load Events 1-200 + 999</button>
+          <button class="obs-btn" onclick="dolphin5LoadProgram(2)">Load from Meet Program</button>
           <span id="dolphin5-2-load-label" style="font-size:11px;color:#888;margin-left:8px;">Not race-safe &mdash; confirm before sending</span>
         </div>
       </div>
@@ -1298,8 +1300,8 @@ function raceNumCell(row) {
 function dolphinCell(row) {
   const has = v => v !== null && v !== undefined;
   const parts = [];
-  if (has(row.dolphin_race_num))  parts.push(row.dolphin_race_num + ' <span class="dolphin-src">D4</span>');
-  if (has(row.dolphin5_race_num)) parts.push(row.dolphin5_race_num + ' <span class="dolphin-src d5">D5</span>');
+  if (has(row.dolphin_race_num))  parts.push(row.dolphin_race_num);
+  if (has(row.dolphin5_race_num)) parts.push(row.dolphin5_race_num);
   const val = parts.length ? parts.join('<br>') : '—';
   const history = row.dolphin_num_history ? row.dolphin_num_history.split('\\n') : [];
   const classes = [];
@@ -2232,12 +2234,24 @@ function dolphin5SaveConfig(num) {
 }
 
 function dolphin5LoadEvents(num) {
-  if (!confirm('Pool ' + num + ': CLEAR all Dolphin5 events and load events 1-200 (1 heat each)?\\n\\n' +
+  if (!confirm('Pool ' + num + ': CLEAR all Dolphin5 events and load events 1-200 + 999 (1 heat each)?\\n\\n' +
                'Only do this when NO race is running or displayed in the Dolphin5 Live view ' +
                '-- Dolphin5 can crash otherwise.')) return;
   const label = document.getElementById('dolphin5-' + num + '-load-label');
   label.textContent = 'Loading...';
   fetch('/api/dolphin5/pool' + num + '/load_events', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { label.textContent = d.message; label.style.color = d.ok ? '#4caf50' : '#f44336'; })
+    .catch(e => { label.textContent = 'Request failed: ' + e; label.style.color = '#f44336'; });
+}
+
+function dolphin5LoadProgram(num) {
+  if (!confirm('Pool ' + num + ': CLEAR all Dolphin5 events and load every event from the Meet Program + 999?\\n\\n' +
+               'Only do this when NO race is running or displayed in the Dolphin5 Live view ' +
+               '-- Dolphin5 can crash otherwise.')) return;
+  const label = document.getElementById('dolphin5-' + num + '-load-label');
+  label.textContent = 'Loading...';
+  fetch('/api/dolphin5/pool' + num + '/load_program_events', { method: 'POST' })
     .then(r => r.json())
     .then(d => { label.textContent = d.message; label.style.color = d.ok ? '#4caf50' : '#f44336'; })
     .catch(e => { label.textContent = 'Request failed: ' + e; label.style.color = '#f44336'; });
@@ -2282,7 +2296,7 @@ function loadCompanionStatus() {
           label.title = p.error || '';
         }
         document.getElementById('companion-' + role + '-heard').textContent =
-          p.last_heard_ago == null ? 'never (this run)' : _agoText(p.last_heard_ago) + ' (' + p.last_path + ')';
+          p.last_heard_ago == null ? 'never (implementation pending)' : _agoText(p.last_heard_ago) + ' (' + p.last_path + ')';
         if (role === 'streaming') {
           document.getElementById('companion-streaming-addr').textContent = p.host + ':' + p.port;
         } else {
@@ -3227,4 +3241,14 @@ def api_dolphin5_load_events(pool_num):
     if pool_num not in (1, 2):
         return jsonify({"ok": False, "message": "Unknown pool"}), 400
     ok, message = dolphin5_events.load_events(pool_num)
+    return jsonify({"ok": ok, "message": message}), (200 if ok else 409)
+
+
+@app.route("/api/dolphin5/pool<int:pool_num>/load_program_events", methods=["POST"])
+def api_dolphin5_load_program_events(pool_num):
+    """Manual button only: clearEvents + every Meet Program event (+999) on one pool."""
+    import dolphin5_events
+    if pool_num not in (1, 2):
+        return jsonify({"ok": False, "message": "Unknown pool"}), 400
+    ok, message = dolphin5_events.load_program_events(pool_num)
     return jsonify({"ok": ok, "message": message}), (200 if ok else 409)

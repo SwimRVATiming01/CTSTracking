@@ -27,29 +27,63 @@ import dolphin5_control
 log = logging.getLogger("cts_tracker")
 
 EVENT_COUNT = 200
+PLACEHOLDER_EVENT = 999  # Streamline streaming placeholder; unloaded it shows up as blank-event .xml files
+PLACEHOLDER_NAME = "Streamline"
 SEND_GAP_SECONDS = 0.05  # small pacing so Dolphin5 isn't flooded with 200 lines at once
 
 _load_lock = threading.Lock()  # one load at a time, across both pools
 
 
-def load_events(pool_num):
-    """Clear and reload events 1..EVENT_COUNT. Returns (ok, message)."""
+def _send_event_list(pool_num, events, what):
+    """clearEvents, then setEventInfo for each (number, name) in order, one
+    heat each. Returns (ok, message)."""
     conn = dolphin5_control.get_connection(pool_num)
     if not conn or not conn.is_connected():
         return False, f"Pool {pool_num} Dolphin5 not connected (is TCP control ON?)"
     if not _load_lock.acquire(blocking=False):
         return False, "An event load is already in progress"
     try:
-        log.warning(f"Dolphin5 pool {pool_num}: manual event load started (clearEvents + {EVENT_COUNT} events)")
+        log.warning(f"Dolphin5 pool {pool_num}: manual event load started (clearEvents + {what})")
         conn.send("clearEvents")
         time.sleep(0.5)
-        for n in range(1, EVENT_COUNT + 1):
-            conn.send(f"setEventInfo,{n},{n},Event {n},1,1,A")
+        for idx, (num, name) in enumerate(events, start=1):
+            name = name.replace(",", " ")  # commas would split the TCP command's fields
+            conn.send(f"setEventInfo,{idx},{num},{name},1,1,A")
             time.sleep(SEND_GAP_SECONDS)
+        # Streamline placeholder always lives in slot 999, not after the list
+        conn.send(f"setEventInfo,{PLACEHOLDER_EVENT},{PLACEHOLDER_EVENT},{PLACEHOLDER_NAME},1,1,A")
     except (RuntimeError, OSError) as e:
         log.warning(f"Dolphin5 pool {pool_num}: event load failed: {e}")
         return False, f"Send failed partway: {e}"
     finally:
         _load_lock.release()
     log.info(f"Dolphin5 pool {pool_num}: manual event load finished")
-    return True, f"Loaded events 1-{EVENT_COUNT} on pool {pool_num}"
+    return True, f"Loaded {what} on pool {pool_num}"
+
+
+def load_events(pool_num):
+    """Clear and reload events 1..EVENT_COUNT plus the 999 placeholder."""
+    events = [(n, f"Event {n}") for n in range(1, EVENT_COUNT + 1)]
+    return _send_event_list(pool_num, events, f"events 1-{EVENT_COUNT} + {PLACEHOLDER_EVENT}")
+
+
+def load_program_events(pool_num):
+    """Clear and load every event in the active meet's Meet Program / Session
+    Report (both pools get the full list -- no pool split), plus 999. Events
+    only: one heat each, the .xml heat number is correct regardless."""
+    import database
+    meet = database.get_active_meet()
+    if not meet:
+        return False, "No active meet -- import a Meet Program first"
+    events = []
+    for event_id, name in database.get_event_names(meet["meet_id"]).items():
+        try:
+            num = int(str(event_id).strip())
+        except ValueError:
+            continue
+        if num != PLACEHOLDER_EVENT:
+            events.append((num, name or f"Event {num}"))
+    if not events:
+        return False, "No events found for the active meet"
+    events.sort()
+    return _send_event_list(pool_num, events, f"{len(events)} program events + {PLACEHOLDER_EVENT}")
