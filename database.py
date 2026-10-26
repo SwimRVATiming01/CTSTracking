@@ -595,6 +595,8 @@ def get_race_dashboard(meet_id, session=None, db_path=None):
         else:
             row["pool"] = 2
 
+    _attach_lane_posts(rows, meet_id, db_path)
+
     # Last ingested heat per pool (row with highest CTS race number in each pool)
     p1_max = max((r["cts_race_num"] for r in rows if r["pool"] == 1), default=None)
     p2_max = max((r["cts_race_num"] for r in rows if r["pool"] == 2), default=None)
@@ -1474,6 +1476,67 @@ def _snapshot_scheduler():
 # ===========================================================================
 # LANE POSTS (Companion LaneIOString)
 # ===========================================================================
+
+LANE_POST_WINDOW_SECONDS = 5  # live 2026-10-25: post lands 0.9-1.3s before its .gen
+
+
+def _attach_lane_posts(rows, meet_id, db_path=None):
+    """Pair each row's shown race (.gen) with the pool Companion's LaneIOString
+    post: same pool, within LANE_POST_WINDOW_SECONDS of the .gen's file time.
+    Several in the window -> the latest wins and lane_post_multi is set.
+    lane_post_mismatch = the post's stamped event/heat isn't this row's (time
+    match is trusted; the stamp is only a cross-check, flagged for review).
+    Rows with no post keep the plain two-colour lanes. Old snapshots without
+    a lane_posts table just get no posts."""
+    for row in rows:
+        row["lane_post_off"] = None
+        row["lane_post_multi"] = False
+        row["lane_post_mismatch"] = False
+        row["lane_post_info"] = None
+    try:
+        if db_path:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+        else:
+            conn = sqlite3.connect(config.DB_PATH)
+            conn.row_factory = sqlite3.Row
+        try:
+            posts = [dict(r) for r in conn.execute(
+                "SELECT * FROM lane_posts WHERE meet_id=? AND pool_num IS NOT NULL", (meet_id,))]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return
+    if not posts:
+        return
+    for p in posts:
+        try:
+            p["_t"] = datetime.fromisoformat(p["received_at"])
+        except (TypeError, ValueError):
+            p["_t"] = None
+    for row in rows:
+        ft, pool = row.get("cts_file_time"), row.get("pool")
+        if not ft or not pool:
+            continue
+        try:
+            t = datetime.fromisoformat(str(ft))
+        except ValueError:
+            continue
+        near = [p for p in posts if p["_t"] and p["pool_num"] == pool
+                and abs((p["_t"] - t).total_seconds()) <= LANE_POST_WINDOW_SECONDS]
+        if not near:
+            continue
+        near.sort(key=lambda p: p["_t"])
+        best = near[-1]
+        row["lane_post_off"] = best["lanes_off"] or ""
+        row["lane_post_multi"] = len(near) > 1
+        row["lane_post_mismatch"] = (
+            str(best["stamped_event"]) != str(row["event_id"])
+            or str(best["stamped_heat"]) != str(row["heat"]))
+        row["lane_post_info"] = "; ".join(
+            f"#{p['id']} {p['received_at'][11:19]} off[{p['lanes_off'] or '-'}] "
+            f"stamped {p['stamped_event']}-{p['stamped_heat']}" for p in near)
+
 
 def lanes_off_from_string(lane_io_string):
     """Each GEN7 lane key press appends its digit; an odd count = lane OFF."""

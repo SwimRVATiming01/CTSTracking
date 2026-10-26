@@ -181,6 +181,7 @@ DASHBOARD_HTML = """
     .lane-active  { background: #1a4a1a !important; color: #1a4a1a !important; font-weight: bold; border-radius: 3px; }
     .lane-empty   { background: #4a1a1a !important; color: #ff6b6b !important; border-radius: 3px; }
     .lane-unknown { color: #333; }
+    .lane-disagree { background: #b35a00 !important; color: #ffd8a8 !important; font-weight: bold; border-radius: 3px; }
 
     /* Gap flag */
     td.gap-flag { color: #ff4444 !important; font-weight: bold; }
@@ -1368,6 +1369,31 @@ function dolphinCell(row) {
   return '<td' + classAttr + titleAttr + '>' + val + '</td>';
 }
 
+// GEN7 (lane has a time) vs Companion LaneIOString (lane left ON at RESET):
+// both on = green, both off = red, disagree = orange. No matching post ->
+// plain GEN7 green/red. A warning sign on lane 1 = several posts for this
+// race, or the post's stamped heat isn't this row (hover for the posts).
+function laneCells(row, hasRace) {
+  const active = (hasRace && row.active_lanes != null)  // '' = race filed, no lane recorded -> all red
+    ? row.active_lanes.split(',').map(Number)
+    : null;
+  if (active === null) return [1,2,3,4,5,6,7,8].map(() => '<td class="lane-unknown">—</td>').join('');
+  const hasPost = row.lane_post_off !== null && row.lane_post_off !== undefined;
+  const off = hasPost ? row.lane_post_off.split(',').filter(Boolean).map(Number) : [];
+  const flag = hasPost && (row.lane_post_multi || row.lane_post_mismatch);
+  const title = hasPost
+    ? ' title="' + ((row.lane_post_mismatch ? 'Stamped heat differs from this row. ' : '') +
+        'Lane posts: ' + (row.lane_post_info || '')).replace(/"/g, '&quot;') + '"'
+    : '';
+  return [1,2,3,4,5,6,7,8].map(n => {
+    const gen = active.includes(n);
+    let cls = gen ? 'lane-active' : 'lane-empty';
+    if (hasPost && gen !== !off.includes(n)) cls = 'lane-disagree';
+    const label = (flag && n === 1) ? '⚠' : n;
+    return '<td class="' + cls + '"' + title + '>' + label + '</td>';
+  }).join('');
+}
+
 function renderRow(row) {
   const hasRace = row.cts_race_num !== null && row.cts_race_num !== undefined;
 
@@ -1393,15 +1419,7 @@ function renderRow(row) {
   }
 
   // Lane cells
-  const active = (hasRace && row.active_lanes != null)  // '' = race filed, no lane recorded -> all red
-    ? row.active_lanes.split(',').map(Number)
-    : null;
-  const lanes = [1,2,3,4,5,6,7,8].map(n => {
-    if (active === null) return '<td class="lane-unknown">\u2014</td>';
-    return active.includes(n)
-      ? '<td class="lane-active">' + n + '</td>'
-      : '<td class="lane-empty">' + n + '</td>';
-  }).join('');
+  const lanes = laneCells(row, hasRace);
 
   // CTS # with gap flag \u2014 stacked history if there was a re-swim
   const ctsCell = raceNumCell(row);
@@ -1656,14 +1674,7 @@ function loadHistoryDashboard(meetId) {
             const dc = rounded > 0 ? 'late' : rounded < 0 ? 'early' : 'ontime';
             delta = '<span class="' + dc + '">' + (rounded > 0 ? '+' : '') + rounded + '</span>';
           }
-          const active = (hasRace && row.active_lanes != null)  // '' = race filed, no lane recorded -> all red
-            ? row.active_lanes.split(',').map(Number) : null;
-          const lanes = [1,2,3,4,5,6,7,8].map(n => {
-            if (active === null) return '<td class="lane-unknown">\u2014</td>';
-            return active.includes(n)
-              ? '<td class="lane-active">' + n + '</td>'
-              : '<td class="lane-empty">' + n + '</td>';
-          }).join('');
+          const lanes = laneCells(row, hasRace);
           const ctsCell = raceNumCell(row);
           const dolCell = dolphinCell(row);
           const datasetCell = '<td>' + (row.dolphin_dataset ?? '\u2014') + '</td>';
