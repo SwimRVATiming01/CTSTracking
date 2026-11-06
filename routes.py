@@ -796,6 +796,16 @@ DASHBOARD_HTML = """
 
   <div class="peripherals-group-title">DOLPHIN5</div>
   <div class="obs-row">
+    <label>AHK pulls CTS</label>
+    <button class="obs-btn" id="ahk-cts-toggle" onclick="ahkCtsToggle()">--</button>
+    <span id="ahk-cts-label" style="font-size:11px;color:#888;margin-left:8px;"></span>
+  </div>
+  <div style="font-size:11px;color:#888;max-width:700px;">
+    ON: the Dolphin5 AHK presses F3 (CTS times) in Meet Manager before the Dolphin import.
+    OFF: Dolphin times only. Each PC checks on every heat; resets to OFF at server restart
+    (<code>AHK_PULL_CTS_TIMES</code> in config.py).
+  </div>
+  <div class="obs-row">
     <label>TCP Control</label>
     <button class="obs-btn" id="dolphin5-toggle" onclick="dolphin5Toggle()">--</button>
     <span id="dolphin5-running-label" style="font-size:11px;color:#888;margin-left:8px;"></span>
@@ -2216,6 +2226,7 @@ function obsCancelSchedule(num) {
 let dolphin5MsgAgeTimers = { 1: null, 2: null };
 
 function loadDolphin5Status() {
+  loadAhkImportMode();
   fetch('/api/dolphin5/status')
     .then(r => r.json())
     .then(data => {
@@ -2325,6 +2336,32 @@ function dolphin5LoadProgram(num) {
 }
 
 let dolphin5Running = null;
+
+let ahkPullCts = null;
+
+function loadAhkImportMode() {
+  fetch('/api/ahk/import_mode')
+    .then(r => r.json())
+    .then(data => {
+      ahkPullCts = data.mode === 'both';
+      const btn = document.getElementById('ahk-cts-toggle');
+      btn.textContent = ahkPullCts ? 'ON' : 'OFF';
+      btn.style.background = ahkPullCts ? '#1a4a1a' : '#4a1a1a';
+      btn.style.color = ahkPullCts ? '#6bff6b' : '#ff6b6b';
+      const label = document.getElementById('ahk-cts-label');
+      label.textContent = ahkPullCts ? 'Meet Manager pulls CTS + Dolphin' : 'Meet Manager pulls Dolphin only';
+      label.style.color = ahkPullCts ? '#6bff6b' : '#888';
+    })
+    .catch(() => {});
+}
+
+function ahkCtsToggle() {
+  fetch('/api/ahk/import_mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: ahkPullCts ? 'dolphin' : 'both' })
+  }).then(() => loadAhkImportMode());
+}
 
 function dolphin5Toggle() {
   if (dolphin5Running && !confirm('Turn Dolphin5 TCP control OFF?\\n\\n' +
@@ -3340,6 +3377,30 @@ def api_dolphin5_config():
             port = int(port) if port not in (None, "") else None
             dolphin5_control.update_config(i, host=host, port=port)
     return jsonify({"ok": True})
+
+
+# In-memory on purpose, like the TCP toggle: a restart falls back to config.
+_ahk_pull_cts = config.AHK_PULL_CTS_TIMES
+
+
+@app.route("/api/ahk/import_mode", methods=["GET", "POST"])
+def api_ahk_import_mode():
+    """What the Dolphin5 AHK pulls into Meet Manager: "dolphin" or "both" (CTS F3 + Dolphin).
+
+    GET is polled by the AHK on every heat and returns plain text so AHK
+    needn't parse JSON when ?plain=1; otherwise JSON for the dashboard.
+    """
+    global _ahk_pull_cts
+    if request.method == "POST":
+        mode = ((request.json or {}).get("mode") or "").strip().lower()
+        if mode not in ("dolphin", "both"):
+            return jsonify({"error": "mode must be 'dolphin' or 'both'"}), 400
+        _ahk_pull_cts = (mode == "both")
+        log.info("AHK import mode set to %s", mode)
+    mode = "both" if _ahk_pull_cts else "dolphin"
+    if request.args.get("plain"):
+        return mode, 200, {"Content-Type": "text/plain"}
+    return jsonify({"mode": mode})
 
 
 @app.route("/api/dolphin5/start", methods=["POST"])

@@ -90,6 +90,12 @@ INGEST_DOLPHIN5_XML_ENABLED = True
 # copy of the server so it can't drive the live Dolphin5 units.
 DOLPHIN5_TCP_ENABLED = True
 
+# Whether the Dolphin5 AHK script also pulls CTS times into Meet Manager
+# (F3) before its Dolphin import. Switched from the Peripherals toggle; resets
+# to this value on every restart. The AHK treats anything but a clear "both"
+# from /api/ahk/import_mode as Dolphin-only.
+AHK_PULL_CTS_TIMES = False
+
 # Per-pool Dolphin5 unit connection info. host/port are just hardcoded
 # fallbacks used only until something's been saved via the dashboard's
 # Dolphin5 panel (database.get_dolphin5_configs()/save_dolphin5_config() --
