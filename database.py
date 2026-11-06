@@ -1186,13 +1186,29 @@ _OLD_TIMING_CLIENTS_NOTE = (
     + _TIMING_CLIENTS_NOTE_REST
 )
 
-CHECKLIST_TIMING_CLIENTS_NOTE = (
+_OLD_TIMING_CLIENTS_NOTE_V2 = (
     "client.py -- required on the Dolphin4 machine (only when Dolphin4 is in use):\n"
     "- Copy client.py from the CTSTracking repo to the machine and run it (needs Python + psutil)\n"
     "- Only path for Dolphin4 .do3 to reach CTSTracking (relays C:\\CTSDolphin to \\\\CSAC-001\\swmeets8\\racenumbers)\n"
     "- Optional on the GEN7 machine: heartbeat/status only (Vicreo, AHK scripts, share access)\n"
     "- Not needed for Dolphin5; shows up here under the machine's computer name\n"
     + _TIMING_CLIENTS_NOTE_REST
+)
+
+CHECKLIST_TIMING_CLIENTS_NOTE = (
+    "CTS_Client.exe -- every timing PC (Dolphin5 and GEN7), installed in C:\\CTSClient:\n"
+    "- Reports here under the computer name every 30s: running AHK scripts, Vicreo, share access, Dolphin5 open\n"
+    "- Dolphin PCs: copies .xml from C:\\CTSDolphin to its share subfolder (.do3 as backup)\n"
+    "- GEN7 PCs: report only -- GEN7 writes .gen to the share itself\n"
+    "- Writes C:\\CTSClient\\server.txt so the Dolphin5 AHK can find this server\n"
+    "\n"
+    "Dolphin5_ThreeMode.ahk (or Dolphin5_KeysOnly.ahk) -- Dolphin5 PC (one per pool), key presses only:\n"
+    "- Run from G:\\Shared drives\\#Meet Management\\Timing Maintenance\\Autohotkeys\\"
+    "Dolphin (and maybe some Meet Manager)\\\n"
+    "- Closes Dolphin5's reset dialog; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps\n"
+    "- Each heat follows \"AHK MM import\" in Peripherals: Dolphin only, + CTS (F3), or + CTS + adjudicate (F3, Ctrl+K)\n"
+    "- Fails this item if Dolphin5 is open but no Dolphin5*.ahk is running\n"
+    "- Older Dolphin5_OnePool*.ahk still send their own heartbeat (<COMPUTERNAME>_DOLPHIN5_AHK)"
 )
 
 
@@ -1299,8 +1315,9 @@ def _backfill_checklist_notes():
         )
         conn.execute(
             "UPDATE checklist_items SET notes=? "
-            "WHERE label='Timing machine clients' AND (notes IS NULL OR notes='' OR notes=?)",
-            (CHECKLIST_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE)
+            "WHERE label='Timing machine clients' "
+            "AND (notes IS NULL OR notes='' OR notes=? OR notes=?)",
+            (CHECKLIST_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE_V2)
         )
 
 

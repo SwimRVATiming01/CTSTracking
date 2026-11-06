@@ -795,15 +795,20 @@ DASHBOARD_HTML = """
   <div id="companion-unassigned" style="font-size:11px;color:#ffb74d;max-width:700px;"></div>
 
   <div class="peripherals-group-title">DOLPHIN5</div>
+  <div id="ahk-cts-box" style="border:2px solid #555;background:#1e1e2e;border-radius:6px;padding:8px 12px;margin:6px 0 12px;max-width:700px;">
   <div class="obs-row">
-    <label>AHK pulls CTS</label>
-    <button class="obs-btn" id="ahk-cts-toggle" onclick="ahkCtsToggle()">--</button>
+    <label>AHK MM import</label>
+    <button class="obs-btn ahk-mode-btn" data-mode="dolphin" onclick="ahkSetMode('dolphin')">Dolphin only</button>
+    <button class="obs-btn ahk-mode-btn" data-mode="both" onclick="ahkSetMode('both')">+ CTS</button>
+    <button class="obs-btn ahk-mode-btn" data-mode="adjudicate" onclick="ahkSetMode('adjudicate')">+ CTS + Adjudicate</button>
     <span id="ahk-cts-label" style="font-size:11px;color:#888;margin-left:8px;"></span>
   </div>
   <div style="font-size:11px;color:#888;max-width:700px;">
-    ON: the Dolphin5 AHK presses F3 (CTS times) in Meet Manager before the Dolphin import.
-    OFF: Dolphin times only. Each PC checks on every heat; resets to OFF at server restart
-    (<code>AHK_PULL_CTS_TIMES</code> in config.py).
+    What the Dolphin5 AHK does in Meet Manager each heat. + CTS: F3 (CTS times) before the Dolphin import.
+    + Adjudicate: also Ctrl+K, Enter after F3. Each PC checks on every heat; resets to Dolphin only at
+    server restart (<code>AHK_IMPORT_MODE</code> in config.py). Older AHK copies don't know Adjudicate and
+    treat it as Dolphin only.
+  </div>
   </div>
   <div class="obs-row">
     <label>TCP Control</label>
@@ -2337,29 +2342,39 @@ function dolphin5LoadProgram(num) {
 
 let dolphin5Running = null;
 
-let ahkPullCts = null;
+// Per mode: label text, label colour, box border, box background.
+const AHK_MODE_STYLE = {
+  dolphin:    ['Meet Manager pulls Dolphin only',               '#888',    '#4a6fa5', '#16202e'],
+  both:       ['Meet Manager pulls CTS + Dolphin',              '#ffb74d', '#ffb74d', '#2e2410'],
+  adjudicate: ['Meet Manager pulls CTS + Dolphin, adjudicates', '#ff8a65', '#ff7043', '#2e1810'],
+};
 
 function loadAhkImportMode() {
   fetch('/api/ahk/import_mode')
     .then(r => r.json())
     .then(data => {
-      ahkPullCts = data.mode === 'both';
-      const btn = document.getElementById('ahk-cts-toggle');
-      btn.textContent = ahkPullCts ? 'ON' : 'OFF';
-      btn.style.background = ahkPullCts ? '#1a4a1a' : '#4a1a1a';
-      btn.style.color = ahkPullCts ? '#6bff6b' : '#ff6b6b';
+      const st = AHK_MODE_STYLE[data.mode] || AHK_MODE_STYLE.dolphin;
+      document.querySelectorAll('.ahk-mode-btn').forEach(b => {
+        const on = b.dataset.mode === data.mode;
+        b.style.background = on ? st[2] : '';
+        b.style.color = on ? '#111' : '';
+        b.style.fontWeight = on ? 'bold' : '';
+      });
       const label = document.getElementById('ahk-cts-label');
-      label.textContent = ahkPullCts ? 'Meet Manager pulls CTS + Dolphin' : 'Meet Manager pulls Dolphin only';
-      label.style.color = ahkPullCts ? '#6bff6b' : '#888';
+      label.textContent = st[0];
+      label.style.color = st[1];
+      const box = document.getElementById('ahk-cts-box');
+      box.style.borderColor = st[2];
+      box.style.background = st[3];
     })
     .catch(() => {});
 }
 
-function ahkCtsToggle() {
+function ahkSetMode(mode) {
   fetch('/api/ahk/import_mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: ahkPullCts ? 'dolphin' : 'both' })
+    body: JSON.stringify({ mode: mode })
   }).then(() => loadAhkImportMode());
 }
 
@@ -3380,24 +3395,28 @@ def api_dolphin5_config():
 
 
 # In-memory on purpose, like the TCP toggle: a restart falls back to config.
-_ahk_pull_cts = config.AHK_PULL_CTS_TIMES
+AHK_IMPORT_MODES = ("dolphin", "both", "adjudicate")
+_ahk_import_mode = config.AHK_IMPORT_MODE
 
 
 @app.route("/api/ahk/import_mode", methods=["GET", "POST"])
 def api_ahk_import_mode():
-    """What the Dolphin5 AHK pulls into Meet Manager: "dolphin" or "both" (CTS F3 + Dolphin).
+    """What the Dolphin5 AHK does in Meet Manager each heat:
+    "dolphin" (Dolphin only), "both" (CTS F3 + Dolphin), or
+    "adjudicate" (CTS F3, adjudicate ^K, then Dolphin).
 
     GET is polled by the AHK on every heat and returns plain text so AHK
     needn't parse JSON when ?plain=1; otherwise JSON for the dashboard.
+    Older AHK copies only recognise "both"; anything else is Dolphin-only to them.
     """
-    global _ahk_pull_cts
+    global _ahk_import_mode
     if request.method == "POST":
         mode = ((request.json or {}).get("mode") or "").strip().lower()
-        if mode not in ("dolphin", "both"):
-            return jsonify({"error": "mode must be 'dolphin' or 'both'"}), 400
-        _ahk_pull_cts = (mode == "both")
+        if mode not in AHK_IMPORT_MODES:
+            return jsonify({"error": "mode must be one of " + ", ".join(AHK_IMPORT_MODES)}), 400
+        _ahk_import_mode = mode
         log.info("AHK import mode set to %s", mode)
-    mode = "both" if _ahk_pull_cts else "dolphin"
+    mode = _ahk_import_mode
     if request.args.get("plain"):
         return mode, 200, {"Content-Type": "text/plain"}
     return jsonify({"mode": mode})

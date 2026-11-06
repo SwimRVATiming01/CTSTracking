@@ -50,7 +50,7 @@ except ImportError:
 
 # Bump on every rebuild of dist/CTS_Client.exe. CTSTracking reads this line
 # from its own copy of client.py and flags machines reporting anything else.
-CLIENT_VERSION = "2.0.1"
+CLIENT_VERSION = "2.1.0"
 
 # Where the .exe must be deployed on every machine. Running it from Google
 # Drive (or anything synced) breaks updates -- the running .exe is locked --
@@ -362,6 +362,27 @@ def _gather_status():
     }
 
 
+# The Dolphin5 AHK reads this to find the server (it only sends key presses
+# and asks for the import mode; the client does all the reporting).
+SERVER_FILE = os.path.join(INSTALL_DIR, "server.txt")
+
+
+def _write_server_file(server):
+    url = f"http://{server[0]}:{server[1]}"
+    try:
+        try:
+            with open(SERVER_FILE, encoding="utf-8") as f:
+                if f.read().strip() == url:
+                    return
+        except OSError:
+            pass
+        with open(SERVER_FILE, "w", encoding="utf-8") as f:
+            f.write(url + "\n")
+        log.info(f"Wrote {SERVER_FILE}: {url}")
+    except OSError as e:
+        log.warning(f"Could not write {SERVER_FILE}: {e}")
+
+
 def _heartbeat_loop():
     """
     Background thread: discover the server via UDP broadcast, then send
@@ -375,6 +396,7 @@ def _heartbeat_loop():
             server = _discover_server()
             if server:
                 log.info(f"Heartbeat: server found at {server[0]}:{server[1]}")
+                _write_server_file(server)
             else:
                 log.debug("Heartbeat: server not found, retrying in 30s")
                 time.sleep(HEARTBEAT_INTERVAL)

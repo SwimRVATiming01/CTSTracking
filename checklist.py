@@ -150,7 +150,10 @@ def _check_timing_clients(params, context):
         any_online = any_online or c["online"]
         line = f"{c['machine_id']}: {'online' if c['online'] else 'OFFLINE'}, last seen {c['last_seen']}"
         problems = []
+        scripts = list(dict.fromkeys(c.get("ahk_scripts") or []))
         if c["machine_id"].endswith("_DOLPHIN5_AHK"):
+            # Older Dolphin5 AHKs send their own heartbeat; kept until every PC
+            # runs Dolphin5_KeysOnly.ahk (reported by CTS_Client instead).
             if not c["online"]:
                 dolphin5_problem = True
             elif c.get("dolphin5_running") is False:
@@ -158,6 +161,10 @@ def _check_timing_clients(params, context):
                 problems.append("Dolphin5 closed")
             elif c.get("dolphin5_running"):
                 line += " (Dolphin5 open)"
+        elif c["online"] and c.get("dolphin5_running"):
+            if not any(x.lower().startswith("dolphin5") for x in scripts):
+                dolphin5_problem = True
+                problems.append("Dolphin5 open but no Dolphin5 AHK running")
         if c.get("share_ok") is False:
             problems.append("share unreachable")
         # No C:\CTSDolphin is normal on a GEN7 machine -- only a problem
@@ -177,7 +184,6 @@ def _check_timing_clients(params, context):
         # Informational only -- no expected list, so nothing here fails the item.
         # Every client should have Vicreo and at least one AHK script: green
         # when present, grey placeholder line when not.
-        scripts = list(dict.fromkeys(c.get("ahk_scripts") or []))
         if problems:
             line += f" ({', '.join(problems)})"
         lines.append(_line(c["online"] and not problems, line))
