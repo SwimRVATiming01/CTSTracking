@@ -172,8 +172,6 @@ def _check_timing_clients(params, context):
         if c.get("dolphin_ok") is False and c.get("dolphin5_running"):
             problems.append("no Dolphin folder")
         version = c.get("client_version")
-        if latest and version != latest:
-            problems.append(f"client {version or 'pre-2.0'}, latest is {latest}")
         if c.get("install_ok") is False:
             problems.append(f"running from {c.get('install_dir')}, not C:\\CTSClient")
         folder = c.get("share_folder")
@@ -187,13 +185,25 @@ def _check_timing_clients(params, context):
         if problems:
             line += f" ({', '.join(problems)})"
         lines.append(_line(c["online"] and not problems, line))
-        # "  - " lines render as sub-bullets under the line above.
-        lines.append("  - " + (_line(True, "Vicreo") if c.get("vicreo_running")
-                               else _line(None, "Vicreo not running")))
+        # "  - " lines render as sub-bullets under the line above,
+        # in this order: AHK scripts, client version, Vicreo.
         if scripts:
             lines.extend("  - " + _line(True, s) for s in scripts)
         else:
             lines.append("  - " + _line(None, "No AHK script running"))
+        # Client version: green if it matches this repo's client.py, red if not,
+        # grey if the latest can't be read. Skipped for the old AHK's own
+        # heartbeat entry, which isn't a client.
+        if not c["machine_id"].endswith("_DOLPHIN5_AHK"):
+            shown = version or "pre-2.0"
+            if not latest:
+                lines.append("  - " + _line(None, f"Client {shown}"))
+            elif version == latest:
+                lines.append("  - " + _line(True, f"Client {shown}"))
+            else:
+                lines.append("  - " + _line(False, f"Client {shown} (latest is {latest})"))
+        lines.append("  - " + (_line(True, "Vicreo") if c.get("vicreo_running")
+                               else _line(None, "Vicreo not running")))
 
     # Share folders no online client claims: a renamed machine, a changed IP,
     # or a machine whose client isn't running.
