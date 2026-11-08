@@ -90,11 +90,12 @@ INGEST_DOLPHIN5_XML_ENABLED = True
 # copy of the server so it can't drive the live Dolphin5 units.
 DOLPHIN5_TCP_ENABLED = True
 
-# What the Dolphin5 AHK does in Meet Manager each heat: Dolphin only, also pull
+# What the Dolphin5 AHK does in Meet Manager each heat, per pool: nothing at all
+# ("none" -- leave MM alone, e.g. while it restarts), Dolphin only, also pull
 # CTS times (F3), or pull CTS times and adjudicate (F3, ^K). Picked from the
 # Peripherals buttons; resets to this value on every restart. The AHK treats
 # any reply it doesn't recognise from /api/ahk/import_mode as Dolphin only.
-AHK_IMPORT_MODE = "dolphin"   # "dolphin", "both", or "adjudicate"
+AHK_IMPORT_MODE = "dolphin"   # "none", "dolphin", "both", or "adjudicate" (both pools)
 
 # Per-pool Dolphin5 unit connection info. host/port are just hardcoded
 # fallbacks used only until something's been saved via the dashboard's

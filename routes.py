@@ -304,7 +304,7 @@ DASHBOARD_HTML = """
     #btn-peripherals { background:#1a1a3a; color:#c0a0ff; margin-left:0; }
     #btn-peripherals.active { background:#c0a0ff; color:#0d1117; }
     #peripherals-view { padding:14px; display:flex; flex-direction:column; gap:12px; }
-    .peripherals-group-title { font-size:11px; color:#666; letter-spacing:1px; text-transform:uppercase;
+    .peripherals-group-title { font-size:13px; font-weight:bold; color:#fff; letter-spacing:1px; text-transform:uppercase;
                                 margin:6px 0 -4px; }
     .obs-panels { display:flex; gap:12px; flex-wrap:wrap; }
     .obs-panel { background:#16213e; border:1px solid #0f3460; border-radius:6px; padding:12px; min-width:300px; flex:1; }
@@ -795,21 +795,6 @@ DASHBOARD_HTML = """
   <div id="companion-unassigned" style="font-size:11px;color:#ffb74d;max-width:700px;"></div>
 
   <div class="peripherals-group-title">DOLPHIN5</div>
-  <div id="ahk-cts-box" style="border:2px solid #555;background:#1e1e2e;border-radius:6px;padding:8px 12px;margin:6px 0 12px;max-width:700px;">
-  <div class="obs-row">
-    <label>AHK MM import</label>
-    <button class="obs-btn ahk-mode-btn" data-mode="dolphin" onclick="ahkSetMode('dolphin')">Dolphin only</button>
-    <button class="obs-btn ahk-mode-btn" data-mode="both" onclick="ahkSetMode('both')">+ CTS</button>
-    <button class="obs-btn ahk-mode-btn" data-mode="adjudicate" onclick="ahkSetMode('adjudicate')">+ CTS + Adjudicate</button>
-    <span id="ahk-cts-label" style="font-size:11px;color:#888;margin-left:8px;"></span>
-  </div>
-  <div style="font-size:11px;color:#888;max-width:700px;">
-    What the Dolphin5 AHK does in Meet Manager each heat. + CTS: F3 (CTS times) before the Dolphin import.
-    + Adjudicate: also Ctrl+K, Enter after F3. Each PC checks on every heat; resets to Dolphin only at
-    server restart (<code>AHK_IMPORT_MODE</code> in config.py). Older AHK copies don't know Adjudicate and
-    treat it as Dolphin only.
-  </div>
-  </div>
   <div class="obs-row">
     <label>TCP Control</label>
     <button class="obs-btn" id="dolphin5-toggle" onclick="dolphin5Toggle()">--</button>
@@ -820,6 +805,42 @@ DASHBOARD_HTML = """
     Off drops both connections and sends nothing. Starts ON at every server restart
     (<code>DOLPHIN5_TCP_ENABLED</code> in config.py).
   </div>
+
+  <div style="font-size:11px;color:#888;max-width:700px;margin-top:12px;">
+    AHK MM import: what each pool's Dolphin5 AHK does in Meet Manager each heat. No MM: no keys, no window switching,
+    no hotkeys &mdash; only closes the Dolphin5 reset dialog (use while MM closes/restarts).
+    + CTS: F3 (CTS times) before the Dolphin import. + Adjudicate: also Ctrl+K, Enter.
+    The server knows which pool is asking by matching the PC's IP to that pool's Dolphin5 host below;
+    a PC that matches neither (host blank or wrong), or can't reach the server, gets No MM. Resets to Dolphin only at server restart
+    (<code>AHK_IMPORT_MODE</code> in config.py). Older AHK copies treat No MM and Adjudicate as Dolphin only.
+  </div>
+  <div class="obs-panels" style="margin-bottom:12px;">
+    <div class="obs-panel">
+      <div class="obs-panel-title">AHK MM import &mdash; Pool 1</div>
+      <div class="obs-section-title" style="margin-top:4px;">MODE</div>
+      <div class="obs-row">
+        <button class="obs-btn ahk-mode-btn" data-pool="1" data-mode="none" onclick="ahkSetMode(1,'none')">No MM</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="1" data-mode="dolphin" onclick="ahkSetMode(1,'dolphin')">Dolphin only</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="1" data-mode="both" onclick="ahkSetMode(1,'both')">+ CTS</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="1" data-mode="adjudicate" onclick="ahkSetMode(1,'adjudicate')">+ CTS + Adjudicate</button>
+      </div>
+      <div class="obs-status-row"><div class="obs-indicator"><span class="obs-dot off" id="ahk-cts-dot-1"></span><span id="ahk-cts-label-1" style="color:#888">--</span></div></div>
+      <div class="obs-row"><label>Last AHK check</label><span id="ahk-poll-1" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+    </div>
+    <div class="obs-panel">
+      <div class="obs-panel-title">AHK MM import &mdash; Pool 2</div>
+      <div class="obs-section-title" style="margin-top:4px;">MODE</div>
+      <div class="obs-row">
+        <button class="obs-btn ahk-mode-btn" data-pool="2" data-mode="none" onclick="ahkSetMode(2,'none')">No MM</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="2" data-mode="dolphin" onclick="ahkSetMode(2,'dolphin')">Dolphin only</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="2" data-mode="both" onclick="ahkSetMode(2,'both')">+ CTS</button>
+        <button class="obs-btn ahk-mode-btn" data-pool="2" data-mode="adjudicate" onclick="ahkSetMode(2,'adjudicate')">+ CTS + Adjudicate</button>
+      </div>
+      <div class="obs-status-row"><div class="obs-indicator"><span class="obs-dot off" id="ahk-cts-dot-2"></span><span id="ahk-cts-label-2" style="color:#888">--</span></div></div>
+      <div class="obs-row"><label>Last AHK check</label><span id="ahk-poll-2" style="font-size:12px;color:#e0e0e0;">&#8212;</span></div>
+    </div>
+  </div>
+  <div id="ahk-poll-unmatched" style="font-size:11px;color:#ffb74d;max-width:700px;margin-bottom:12px;"></div>
 
   <div class="obs-panels">
 
@@ -2342,8 +2363,9 @@ function dolphin5LoadProgram(num) {
 
 let dolphin5Running = null;
 
-// Per mode: label text, label colour, box border, box background.
+// Per mode: label text, label colour, dot / selected-button colour, (unused) background.
 const AHK_MODE_STYLE = {
+  none:       ['AHK leaves Meet Manager alone',                 '#ef5350', '#ef5350', '#2e1414'],
   dolphin:    ['Meet Manager pulls Dolphin only',               '#888',    '#4a6fa5', '#16202e'],
   both:       ['Meet Manager pulls CTS + Dolphin',              '#ffb74d', '#ffb74d', '#2e2410'],
   adjudicate: ['Meet Manager pulls CTS + Dolphin, adjudicates', '#ff8a65', '#ff7043', '#2e1810'],
@@ -2353,28 +2375,38 @@ function loadAhkImportMode() {
   fetch('/api/ahk/import_mode')
     .then(r => r.json())
     .then(data => {
-      const st = AHK_MODE_STYLE[data.mode] || AHK_MODE_STYLE.dolphin;
-      document.querySelectorAll('.ahk-mode-btn').forEach(b => {
-        const on = b.dataset.mode === data.mode;
-        b.style.background = on ? st[2] : '';
-        b.style.color = on ? '#111' : '';
-        b.style.fontWeight = on ? 'bold' : '';
+      [1, 2].forEach(pool => {
+        const mode = data.modes[String(pool)];
+        const st = AHK_MODE_STYLE[mode] || AHK_MODE_STYLE.dolphin;
+        document.querySelectorAll('.ahk-mode-btn[data-pool="' + pool + '"]').forEach(b => {
+          const on = b.dataset.mode === mode;
+          b.style.background = on ? st[2] : '';
+          b.style.color = on ? '#111' : '';
+          b.style.fontWeight = on ? 'bold' : '';
+        });
+        const label = document.getElementById('ahk-cts-label-' + pool);
+        label.textContent = st[0];
+        label.style.color = st[1];
+        const dot = document.getElementById('ahk-cts-dot-' + pool);
+        dot.className = 'obs-dot';
+        dot.style.background = st[2];
+        const lp = data.last_poll[String(pool)];
+        document.getElementById('ahk-poll-' + pool).textContent =
+          lp ? lp.at.replace('T', ' ') + ' from ' + lp.ip : 'never (since server start)';
       });
-      const label = document.getElementById('ahk-cts-label');
-      label.textContent = st[0];
-      label.style.color = st[1];
-      const box = document.getElementById('ahk-cts-box');
-      box.style.borderColor = st[2];
-      box.style.background = st[3];
+      const um = data.last_poll.unmatched;
+      document.getElementById('ahk-poll-unmatched').textContent = um
+        ? '⚠ AHK at ' + um.ip + ' (' + um.at.replace('T', ' ') + ") matches neither pool's Dolphin5 host, so it got No MM."
+        : '';
     })
     .catch(() => {});
 }
 
-function ahkSetMode(mode) {
+function ahkSetMode(pool, mode) {
   fetch('/api/ahk/import_mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: mode })
+    body: JSON.stringify({ pool: pool, mode: mode })
   }).then(() => loadAhkImportMode());
 }
 
@@ -3395,31 +3427,68 @@ def api_dolphin5_config():
 
 
 # In-memory on purpose, like the TCP toggle: a restart falls back to config.
-AHK_IMPORT_MODES = ("dolphin", "both", "adjudicate")
-_ahk_import_mode = config.AHK_IMPORT_MODE
+AHK_IMPORT_MODES = ("none", "dolphin", "both", "adjudicate")
+_ahk_import_mode = {1: config.AHK_IMPORT_MODE, 2: config.AHK_IMPORT_MODE}
+# Last AHK poll per pool, plus the last poll whose IP matched neither pool.
+_ahk_last_poll = {1: None, 2: None, "unmatched": None}
+
+
+def _ahk_pool_for_ip(ip):
+    """Which pool an AHK poll came from: the pool whose Dolphin5 TCP host
+    (Peripherals > Dolphin5) is this IP, since the AHK runs on that pool's
+    Dolphin PC. Hostnames are resolved. None if neither matches."""
+    for pool in (1, 2):
+        host = (dolphin5_control.get_effective_config(pool).get("host") or "").strip()
+        if not host:
+            continue
+        try:
+            host_ip = socket.gethostbyname(host)
+        except OSError:
+            host_ip = host
+        if ip in (host, host_ip):
+            return pool
+    return None
 
 
 @app.route("/api/ahk/import_mode", methods=["GET", "POST"])
 def api_ahk_import_mode():
-    """What the Dolphin5 AHK does in Meet Manager each heat:
-    "dolphin" (Dolphin only), "both" (CTS F3 + Dolphin), or
-    "adjudicate" (CTS F3, adjudicate ^K, then Dolphin).
+    """What the Dolphin5 AHK does in Meet Manager each heat, per pool:
+    "none" (no Meet Manager interaction at all -- only the reset-dialog
+    autoclick), "dolphin" (Dolphin only), "both" (CTS F3 + Dolphin), or
+    "adjudicate" (CTS F3, Dolphin, adjudicate ^K).
 
-    GET is polled by the AHK on every heat and returns plain text so AHK
-    needn't parse JSON when ?plain=1; otherwise JSON for the dashboard.
-    Older AHK copies only recognise "both"; anything else is Dolphin-only to them.
+    AHK GET (?plain=1): plain-text mode for the calling PC's pool, found from
+    its IP via _ahk_pool_for_ip; ?pool=N overrides; an unmatched PC gets
+    "none". Dashboard GET (no plain): JSON for both pools.
+    POST {"pool": 1|2, "mode": ...}. Older AHK copies only recognise "both";
+    anything else (including "none") is Dolphin-only to them.
     """
-    global _ahk_import_mode
     if request.method == "POST":
-        mode = ((request.json or {}).get("mode") or "").strip().lower()
-        if mode not in AHK_IMPORT_MODES:
-            return jsonify({"error": "mode must be one of " + ", ".join(AHK_IMPORT_MODES)}), 400
-        _ahk_import_mode = mode
-        log.info("AHK import mode set to %s", mode)
-    mode = _ahk_import_mode
+        body = request.json or {}
+        mode = (body.get("mode") or "").strip().lower()
+        try:
+            pool = int(body.get("pool") or 1)
+        except (TypeError, ValueError):
+            pool = 0
+        if mode not in AHK_IMPORT_MODES or pool not in (1, 2):
+            return jsonify({"error": "pool must be 1 or 2 and mode one of " + ", ".join(AHK_IMPORT_MODES)}), 400
+        _ahk_import_mode[pool] = mode
+        log.info("AHK import mode for pool %s set to %s", pool, mode)
+
     if request.args.get("plain"):
-        return mode, 200, {"Content-Type": "text/plain"}
-    return jsonify({"mode": mode})
+        ip = request.remote_addr
+        pool = request.args.get("pool", type=int)
+        if pool not in (1, 2):
+            pool = _ahk_pool_for_ip(ip)
+            if pool is None:
+                # Unknown PC (pool's Dolphin5 host blank or wrong): safest is to
+                # leave Meet Manager alone rather than guess a pool.
+                _ahk_last_poll["unmatched"] = {"ip": ip, "at": datetime.now().isoformat(timespec="seconds")}
+                return "none", 200, {"Content-Type": "text/plain"}
+        _ahk_last_poll[pool] = {"ip": ip, "at": datetime.now().isoformat(timespec="seconds")}
+        return _ahk_import_mode[pool], 200, {"Content-Type": "text/plain"}
+    return jsonify({"modes": {str(p): m for p, m in _ahk_import_mode.items()},
+                    "last_poll": {str(k): v for k, v in _ahk_last_poll.items()}})
 
 
 @app.route("/api/dolphin5/start", methods=["POST"])
