@@ -811,8 +811,8 @@ DASHBOARD_HTML = """
     no hotkeys &mdash; only closes the Dolphin5 reset dialog (use while MM closes/restarts).
     + CTS: F3 (CTS times) before the Dolphin import. + Adjudicate: also Ctrl+K, Enter.
     The server knows which pool is asking by matching the PC's IP to that pool's Dolphin5 host below;
-    a PC that matches neither (host blank or wrong), or can't reach the server, gets No MM. Resets to Dolphin only at server restart
-    (<code>AHK_IMPORT_MODE</code> in config.py). Older AHK copies treat No MM and Adjudicate as Dolphin only.
+    a PC that matches neither (host blank or wrong), or can't reach the server, gets No MM. Each pool keeps its mode across server restarts
+    (a pool never set starts at <code>AHK_IMPORT_MODE</code> in config.py). Older AHK copies treat No MM and Adjudicate as Dolphin only.
   </div>
   <div class="obs-panels" style="margin-bottom:12px;">
     <div class="obs-panel">
@@ -3213,6 +3213,7 @@ def api_heartbeat():
             "last_seen":      datetime.now(),
             "ahk_scripts":    data.get("ahk_scripts", []),
             "vicreo_running": data.get("vicreo_running"),
+            "programs":       data.get("programs"),
             "share_ok":       data.get("share_ok"),
             "dolphin_ok":     data.get("dolphin_ok"),
             "cts_ok":         data.get("cts_ok"),
@@ -3242,6 +3243,7 @@ def _client_rows():
                 "last_seen":      c["last_seen"].strftime("%H:%M:%S"),
                 "ahk_scripts":    c["ahk_scripts"],
                 "vicreo_running": c["vicreo_running"],
+                "programs":       c.get("programs"),
                 "share_ok":       c["share_ok"],
                 "dolphin_ok":     c["dolphin_ok"],
                 "cts_ok":         c["cts_ok"],
@@ -3426,9 +3428,26 @@ def api_dolphin5_config():
     return jsonify({"ok": True})
 
 
-# In-memory on purpose, like the TCP toggle: a restart falls back to config.
+# Saved in the database so a restart keeps each pool's mode; config's
+# AHK_IMPORT_MODE is only the starting value for a pool never set.
 AHK_IMPORT_MODES = ("none", "dolphin", "both", "adjudicate")
 _ahk_import_mode = {1: config.AHK_IMPORT_MODE, 2: config.AHK_IMPORT_MODE}
+_ahk_modes_loaded = False
+
+
+def _load_ahk_modes_once():
+    """Read the saved modes on first use (after init_db has made the table)."""
+    global _ahk_modes_loaded
+    if _ahk_modes_loaded:
+        return
+    _ahk_modes_loaded = True
+    import database
+    try:
+        for p, m in database.get_ahk_import_modes().items():
+            if p in _ahk_import_mode and m in AHK_IMPORT_MODES:
+                _ahk_import_mode[p] = m
+    except Exception:
+        log.exception("Could not load saved AHK import modes; using %s", config.AHK_IMPORT_MODE)
 # Last AHK poll per pool, plus the last poll whose IP matched neither pool.
 _ahk_last_poll = {1: None, 2: None, "unmatched": None}
 
@@ -3463,6 +3482,7 @@ def api_ahk_import_mode():
     POST {"pool": 1|2, "mode": ...}. Older AHK copies only recognise "both";
     anything else (including "none") is Dolphin-only to them.
     """
+    _load_ahk_modes_once()
     if request.method == "POST":
         body = request.json or {}
         mode = (body.get("mode") or "").strip().lower()
@@ -3473,6 +3493,11 @@ def api_ahk_import_mode():
         if mode not in AHK_IMPORT_MODES or pool not in (1, 2):
             return jsonify({"error": "pool must be 1 or 2 and mode one of " + ", ".join(AHK_IMPORT_MODES)}), 400
         _ahk_import_mode[pool] = mode
+        try:
+            import database
+            database.save_ahk_import_mode(pool, mode)
+        except Exception:
+            log.exception("Could not save AHK import mode for pool %s", pool)
         log.info("AHK import mode for pool %s set to %s", pool, mode)
 
     if request.args.get("plain"):

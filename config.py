@@ -93,8 +93,9 @@ DOLPHIN5_TCP_ENABLED = True
 # What the Dolphin5 AHK does in Meet Manager each heat, per pool: nothing at all
 # ("none" -- leave MM alone, e.g. while it restarts), Dolphin only, also pull
 # CTS times (F3), or pull CTS times and adjudicate (F3, ^K). Picked from the
-# Peripherals buttons; resets to this value on every restart. The AHK treats
-# any reply it doesn't recognise from /api/ahk/import_mode as Dolphin only.
+# Peripherals buttons and saved per pool across restarts; this is only the
+# start value for a pool never set. The AHK treats
+# any reply it doesn't recognise (or no reply) from /api/ahk/import_mode as No MM.
 AHK_IMPORT_MODE = "dolphin"   # "none", "dolphin", "both", or "adjudicate" (both pools)
 
 # Per-pool Dolphin5 unit connection info. host/port are just hardcoded

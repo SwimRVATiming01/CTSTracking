@@ -206,6 +206,13 @@ CREATE TABLE IF NOT EXISTS dolphin5_config (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Peripherals > AHK MM import mode per pool, kept across restarts.
+CREATE TABLE IF NOT EXISTS ahk_import_mode (
+    pool_num    INTEGER PRIMARY KEY,
+    mode        TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Event names as listed in MM's Session Report: a backup to schedule.event_name
 -- (from the Meet Program), and the only name source for an event that's in
 -- the Session Report but not the Meet Program.
@@ -1397,6 +1404,29 @@ def save_dolphin5_config(pool_num, host=None, port=None):
                ON CONFLICT(pool_num)
                DO UPDATE SET host=excluded.host, port=excluded.port, updated_at=excluded.updated_at""",
             (pool_num, host, port)
+        )
+
+
+# ===========================================================================
+# AHK MM IMPORT MODE
+# ===========================================================================
+# Each pool's Peripherals > AHK MM import mode, so a server restart keeps it.
+
+def get_ahk_import_modes():
+    """Return {pool_num: mode} for whatever's been saved."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT pool_num, mode FROM ahk_import_mode").fetchall()
+    return {r["pool_num"]: r["mode"] for r in rows}
+
+
+def save_ahk_import_mode(pool_num, mode):
+    with get_write_conn() as conn:
+        conn.execute(
+            """INSERT INTO ahk_import_mode (pool_num, mode, updated_at)
+               VALUES (?,?,datetime('now'))
+               ON CONFLICT(pool_num)
+               DO UPDATE SET mode=excluded.mode, updated_at=excluded.updated_at""",
+            (pool_num, mode)
         )
 
 
