@@ -186,7 +186,7 @@ def _check_timing_clients(params, context):
             line += f" ({', '.join(problems)})"
         lines.append(_line(c["online"] and not problems, line))
         # "  - " lines render as sub-bullets under the line above,
-        # in this order: AHK scripts, client version, Vicreo.
+        # in this order: AHK scripts, client version, Vicreo, reported programs.
         if scripts:
             lines.extend("  - " + _line(True, s) for s in scripts)
         else:
@@ -204,6 +204,11 @@ def _check_timing_clients(params, context):
                 lines.append("  - " + _line(False, f"Client {shown} (latest is {latest})"))
         lines.append("  - " + (_line(True, "Vicreo") if c.get("vicreo_running")
                                else _line(None, "Vicreo not running")))
+        # Client 2.2.0+: the programs listed in client.py's REPORTED_PROGRAMS.
+        # Informational, like Vicreo: green if running, grey if not.
+        for prog, running in (c.get("programs") or {}).items():
+            lines.append("  - " + (_line(True, prog) if running
+                                   else _line(None, f"{prog} not running")))
 
     # Share folders no online client claims: a renamed machine, a changed IP,
     # or a machine whose client isn't running.

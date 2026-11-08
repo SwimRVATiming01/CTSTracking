@@ -50,7 +50,7 @@ except ImportError:
 
 # Bump on every rebuild of dist/CTS_Client.exe. CTSTracking reads this line
 # from its own copy of client.py and flags machines reporting anything else.
-CLIENT_VERSION = "2.1.0"
+CLIENT_VERSION = "2.2.0"
 
 # Where the .exe must be deployed on every machine. Running it from Google
 # Drive (or anything synced) breaks updates -- the running .exe is locked --
@@ -76,6 +76,11 @@ TIMING_NETWORK_PREFIX = "172.16.0."
 DOLPHIN5_SKIP_FILENAMES = {"currentsettings.xml"}
 
 DOLPHIN5_PROCESS_NAME = "dolphin50.exe"
+
+# Programs reported to CTSTracking's checklist (running or not) on every
+# heartbeat. Process (.exe) names as shown in Task Manager > Details; case
+# doesn't matter. Add a name here and rebuild to report another program.
+REPORTED_PROGRAMS = ["vhui64.exe", "dolphin50.exe", "gen7swimming.exe"]
 
 # Seconds to wait after detection before checking file readiness
 DEBOUNCE_SECONDS = 0.75
@@ -319,6 +324,7 @@ def _discover_server():
 def _gather_status():
     """Collect machine status for the heartbeat payload."""
     ahk_scripts    = []
+    running_names  = set()
     vicreo_running = None
     share_ok       = None
     dolphin_ok     = os.path.isdir(DOLPHIN_WATCH_FOLDER)
@@ -327,6 +333,7 @@ def _gather_status():
         try:
             for proc in psutil.process_iter(["name", "cmdline"]):
                 name = (proc.info["name"] or "").lower()
+                running_names.add(name)
                 if "autohotkey" in name:
                     cmdline = proc.info["cmdline"] or []
                     scripts = [os.path.basename(a) for a in cmdline if a.lower().endswith(".ahk")]
@@ -356,6 +363,9 @@ def _gather_status():
         "share_folder":     SHARE_SUBFOLDER,
         "ahk_scripts":      ahk_scripts,
         "vicreo_running":   vicreo_running,
+        # {exe name: True/False}; None if psutil couldn't list processes.
+        "programs":         ({p: p.lower() in running_names for p in REPORTED_PROGRAMS}
+                             if running_names else None),
         "share_ok":         share_ok,
         "dolphin_ok":       dolphin_ok,
         "dolphin5_running": dolphin5_running(),
