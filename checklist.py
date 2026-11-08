@@ -151,17 +151,7 @@ def _check_timing_clients(params, context):
         line = f"{c['machine_id']}: {'online' if c['online'] else 'OFFLINE'}, last seen {c['last_seen']}"
         problems = []
         scripts = list(dict.fromkeys(c.get("ahk_scripts") or []))
-        if c["machine_id"].endswith("_DOLPHIN5_AHK"):
-            # Older Dolphin5 AHKs send their own heartbeat; kept until every PC
-            # runs Dolphin5_KeysOnly.ahk (reported by CTS_Client instead).
-            if not c["online"]:
-                dolphin5_problem = True
-            elif c.get("dolphin5_running") is False:
-                dolphin5_problem = True
-                problems.append("Dolphin5 closed")
-            elif c.get("dolphin5_running"):
-                line += " (Dolphin5 open)"
-        elif c["online"] and c.get("dolphin5_running"):
+        if c["online"] and c.get("dolphin5_running"):
             if not any(x.lower().startswith("dolphin5") for x in scripts):
                 dolphin5_problem = True
                 problems.append("Dolphin5 open but no Dolphin5 AHK running")
@@ -192,16 +182,14 @@ def _check_timing_clients(params, context):
         else:
             lines.append("  - " + _line(None, "No AHK script running"))
         # Client version: green if it matches this repo's client.py, red if not,
-        # grey if the latest can't be read. Skipped for the old AHK's own
-        # heartbeat entry, which isn't a client.
-        if not c["machine_id"].endswith("_DOLPHIN5_AHK"):
-            shown = version or "pre-2.0"
-            if not latest:
-                lines.append("  - " + _line(None, f"Client {shown}"))
-            elif version == latest:
-                lines.append("  - " + _line(True, f"Client {shown}"))
-            else:
-                lines.append("  - " + _line(False, f"Client {shown} (latest is {latest})"))
+        # grey if the latest can't be read.
+        shown = version or "pre-2.0"
+        if not latest:
+            lines.append("  - " + _line(None, f"Client {shown}"))
+        elif version == latest:
+            lines.append("  - " + _line(True, f"Client {shown}"))
+        else:
+            lines.append("  - " + _line(False, f"Client {shown} (latest is {latest})"))
         lines.append("  - " + (_line(True, "Vicreo") if c.get("vicreo_running")
                                else _line(None, "Vicreo not running")))
         # Client 2.2.0+: the programs listed in client.py's REPORTED_PROGRAMS.

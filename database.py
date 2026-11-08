@@ -1202,21 +1202,54 @@ _OLD_TIMING_CLIENTS_NOTE_V2 = (
     + _TIMING_CLIENTS_NOTE_REST
 )
 
-CHECKLIST_TIMING_CLIENTS_NOTE = (
+_CLIENT_EXE_NOTE = (
     "CTS_Client.exe -- every timing PC (Dolphin5 and GEN7), installed in C:\\CTSClient:\n"
     "- Reports here under the computer name every 30s: running AHK scripts, Vicreo, share access, Dolphin5 open\n"
     "- Dolphin PCs: copies .xml from C:\\CTSDolphin to its share subfolder (.do3 as backup)\n"
     "- GEN7 PCs: report only -- GEN7 writes .gen to the share itself\n"
     "- Writes C:\\CTSClient\\server.txt so the Dolphin5 AHK can find this server\n"
     "\n"
-    "Dolphin5_ThreeMode.ahk (or Dolphin5_KeysOnly.ahk) -- Dolphin5 PC (one per pool), key presses only:\n"
+)
+
+_AHK_RUN_FROM_NOTE = (
     "- Run from G:\\Shared drives\\#Meet Management\\Timing Maintenance\\Autohotkeys\\"
     "Dolphin (and maybe some Meet Manager)\\\n"
+)
+
+_OLD_TIMING_CLIENTS_NOTE_V3 = (
+    _CLIENT_EXE_NOTE +
+    "Dolphin5_KeysOnly.ahk -- Dolphin5 PC (one per pool), key presses only:\n"
+    + _AHK_RUN_FROM_NOTE +
+    "- Closes Dolphin5's reset dialog; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps\n"
+    "- Presses F3 (CTS times) first when \"AHK pulls CTS\" is ON in Peripherals\n"
+    "- Fails this item if Dolphin5 is open but no Dolphin5*.ahk is running\n"
+    "- Older Dolphin5_OnePool*.ahk still send their own heartbeat (<COMPUTERNAME>_DOLPHIN5_AHK)"
+)
+
+_OLD_TIMING_CLIENTS_NOTE_V4 = (
+    _CLIENT_EXE_NOTE +
+    "Dolphin5_ThreeMode.ahk (or Dolphin5_KeysOnly.ahk) -- Dolphin5 PC (one per pool), key presses only:\n"
+    + _AHK_RUN_FROM_NOTE +
     "- Closes Dolphin5's reset dialog; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps\n"
     "- Each heat follows \"AHK MM import\" in Peripherals: Dolphin only, + CTS (F3), or + CTS + adjudicate (F3, Ctrl+K)\n"
     "- Fails this item if Dolphin5 is open but no Dolphin5*.ahk is running\n"
     "- Older Dolphin5_OnePool*.ahk still send their own heartbeat (<COMPUTERNAME>_DOLPHIN5_AHK)"
 )
+
+CHECKLIST_TIMING_CLIENTS_NOTE = (
+    _CLIENT_EXE_NOTE +
+    "Dolphin5_FourMode.ahk -- both Dolphin5 PCs (same script on each pool), key presses only:\n"
+    + _AHK_RUN_FROM_NOTE +
+    "- Closes Dolphin5's reset dialog in every mode; F14/F15 (pressed by Companion after its TCP reset) run the Meet Manager steps\n"
+    "- Each heat follows its pool's \"AHK MM import\" in Peripherals: No MM, Dolphin only, + CTS (F3), or + CTS + adjudicate (F3, Ctrl+K)\n"
+    "- Server trouble, or a PC matching neither pool's Dolphin5 host, means No MM\n"
+    "- Fails this item if Dolphin5 is open but no Dolphin5*.ahk is running\n"
+    "- Older scripts are retired to the \"old scripts\" folder on the shared drive"
+)
+
+# Every earlier wording; replaced automatically on startup if still unedited.
+_OLD_TIMING_CLIENTS_NOTES = (_OLD_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE_V2,
+                             _OLD_TIMING_CLIENTS_NOTE_V3, _OLD_TIMING_CLIENTS_NOTE_V4)
 
 
 def _checklist_seed():
@@ -1323,8 +1356,8 @@ def _backfill_checklist_notes():
         conn.execute(
             "UPDATE checklist_items SET notes=? "
             "WHERE label='Timing machine clients' "
-            "AND (notes IS NULL OR notes='' OR notes=? OR notes=?)",
-            (CHECKLIST_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE, _OLD_TIMING_CLIENTS_NOTE_V2)
+            "AND (notes IS NULL OR notes='' OR notes IN (" + ",".join("?" * len(_OLD_TIMING_CLIENTS_NOTES)) + "))",
+            (CHECKLIST_TIMING_CLIENTS_NOTE, *_OLD_TIMING_CLIENTS_NOTES)
         )
 
 
